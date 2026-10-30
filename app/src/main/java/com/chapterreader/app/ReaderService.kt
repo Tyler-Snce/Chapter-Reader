@@ -24,6 +24,7 @@ import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.webkit.CookieManager
+import android.widget.Toast
 import org.jsoup.Jsoup
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -50,6 +51,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_NEXT_CH = "com.chapterreader.NEXT_CH"
         const val ACTION_PREV_CH = "com.chapterreader.PREV_CH"
         const val ACTION_STOP = "com.chapterreader.STOP"
+        const val ACTION_LOAD_URL = "com.chapterreader.LOAD_URL"
+        const val EXTRA_URL = "url"
         const val EXTRA_PLAY = "play"
 
         private const val CHANNEL = "reader"
@@ -194,6 +197,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                     if (intent.getBooleanExtra(EXTRA_PLAY, false)) play()
                 }
             }
+            ACTION_LOAD_URL -> loadChapter(intent.getStringExtra(EXTRA_URL), true)
             ACTION_TOGGLE -> toggle()
             ACTION_NEXT_CH -> nextChapter()
             ACTION_PREV_CH -> prevChapter()
@@ -273,10 +277,23 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             handler.post {
                 loading = false
                 if (ch == null) {
-                    status = "Couldn't load the next chapter"
+                    status = "Couldn't read that page"
                     releaseWake()
                     notifyState()
-                    listener?.onLoadFailed(url)
+                    val l = listener
+                    if (l != null) {
+                        l.onLoadFailed(url)
+                    } else {
+                        Toast.makeText(this, "Couldn't read that page directly, opening it in Chapter Reader", Toast.LENGTH_LONG).show()
+                        try {
+                            startActivity(
+                                Intent(this, MainActivity::class.java)
+                                    .setAction(Intent.ACTION_VIEW)
+                                    .setData(Uri.parse(url))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (_: Exception) {}
+                    }
                     return@post
                 }
                 setChapter(ch, 0)
@@ -410,6 +427,15 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     fun hideBubbleForNow() {
         prefs.edit().putBoolean("bubble", false).apply()
         updateBubble()
+    }
+
+    fun openInBrowser() {
+        val url = chapter?.url ?: return
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Exception) {
+            Toast.makeText(this, "No browser found", Toast.LENGTH_SHORT).show()
+        }
     }
 
     fun openApp() {

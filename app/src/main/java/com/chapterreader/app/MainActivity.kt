@@ -310,6 +310,7 @@ class MainActivity : Activity(), ReaderService.Listener {
     }
 
     private fun sharedUrl(intent: Intent?): String? {
+        if (intent?.action == Intent.ACTION_VIEW) return intent.dataString
         if (intent?.action != Intent.ACTION_SEND) return null
         val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return null
         return Regex("https?://\\S+").find(text)?.value
@@ -331,7 +332,7 @@ class MainActivity : Activity(), ReaderService.Listener {
             else -> "▶"
         }
         statusText.text = when {
-            s == null -> "Open a chapter, then tap Read"
+            s == null -> "Tip: in your own browser tap Share → Chapter Reader"
             s.status.isNotEmpty() -> s.status
             else -> s.chapterName
         }

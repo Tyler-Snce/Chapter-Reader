@@ -74,6 +74,7 @@ class Bubble(private val svc: ReaderService) {
         row1.addView(button("⏪") { svc.jumpPara(-1) })
         row1.addView(button("⏩") { svc.jumpPara(1) })
         row1.addView(button("⏭") { svc.nextChapter() })
+        row1.addView(button("🌐") { panel.visibility = View.GONE; svc.openInBrowser() })
         val row2 = row()
         row2.addView(button("−") { svc.setRate(svc.rate - 0.1f) })
         rateLabel.setTextColor(0xFFFFFFFF.toInt())
