@@ -82,6 +82,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private val audioIo = Executors.newSingleThreadExecutor()
+    private val syncIo = Executors.newSingleThreadExecutor()
     private lateinit var tts: TextToSpeech
     private lateinit var session: MediaSession
     private lateinit var prefs: SharedPreferences
@@ -164,6 +165,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         }
 
         startEngine()
+        syncNow()
     }
 
     private fun systemEngine(): String? =
@@ -384,7 +386,18 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             .putString("resumeUrl", c.url)
             .putInt("resumePara", p)
             .putString("resumeTitle", chapterName)
+            .putLong("resumeUpdated", System.currentTimeMillis())
             .apply()
+        // Upload a few seconds later, so it isn't sent for every single paragraph
+        handler.removeCallbacks(uploadNow)
+        handler.postDelayed(uploadNow, 4000)
+    }
+
+    private val uploadNow = Runnable { syncIo.execute { Sync.push(prefs) } }
+
+    /** Checks online for newer progress (e.g. from your PC). */
+    fun syncNow() {
+        syncIo.execute { if (Sync.pull(prefs)) handler.post { notifyState() } }
     }
 
     private fun paraChanged(p: Int) {
@@ -400,8 +413,18 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         get() = prefs.getString("resumeTitle", null) ?: "your last chapter"
 
     fun resume() {
-        val url = prefs.getString("resumeUrl", null) ?: return
-        loadChapter(url, true, prefs.getInt("resumePara", 0))
+        status = "Finding where you left off\u2026"
+        notifyState()
+        // Use whichever is newer: this phone's place or the one saved online
+        syncIo.execute {
+            Sync.pull(prefs)
+            handler.post {
+                status = ""
+                val url = prefs.getString("resumeUrl", null)
+                if (url == null) { notifyState(); return@post }
+                loadChapter(url, true, prefs.getInt("resumePara", 0))
+            }
+        }
     }
 
     fun play() {
@@ -417,6 +440,10 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun pause() {
+        if (chapter != null) {
+            handler.removeCallbacks(uploadNow)
+            syncIo.execute { Sync.push(prefs) }
+        }
         handler.removeCallbacks(wordTicker)
         lastStartIdx = -1
         playing = false

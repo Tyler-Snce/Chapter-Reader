@@ -2,6 +2,47 @@
 // Runs in the (sometimes hidden) reading window, so it keeps going in the background.
 const { ipcRenderer } = require('electron');
 const { parseChapter, chunks } = require('./extract.js');
+const nodeCrypto = require('crypto');
+
+// Online sync: continue on your phone where you stopped on the PC, and the other way round
+const SYNC_DB = 'SYNC_DATABASE_URL';
+const syncOn = () => SYNC_DB.startsWith('https://');
+
+function syncKey() {
+  const name = (settings.syncUser || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  if (!name) return null;
+  const pin = (settings.syncPin || '').trim();
+  if (!pin) return name;
+  return name + '-' + nodeCrypto.createHash('sha256').update(name + ':' + pin, 'utf8').digest('hex').slice(0, 10);
+}
+const syncUrl = (k) => SYNC_DB.replace(/\/$/, '') + '/progress/' + k + '.json';
+
+async function syncPush() {
+  const k = syncKey(); const r = settings.resume;
+  if (!syncOn() || !k || !r || !r.url) return;
+  try {
+    await fetch(syncUrl(k), {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: r.url, para: r.para || 0, title: r.title || '', updated: r.updated || Date.now(), device: 'pc' }),
+    });
+  } catch (_) {}
+}
+
+/** Takes the online progress if it's newer than this PC's. Returns true if it changed. */
+async function syncPull() {
+  const k = syncKey();
+  if (!syncOn() || !k) return false;
+  try {
+    const r = await fetch(syncUrl(k));
+    const o = await r.json();
+    if (!o || !o.url) return false;
+    if ((o.updated || 0) <= ((settings.resume && settings.resume.updated) || 0)) return false;
+    settings.resume = { url: o.url, para: o.para || 0, title: o.title || '', updated: o.updated };
+    ipcRenderer.send('settings-set', { resume: settings.resume });
+    return true;
+  } catch (_) { return false; }
+}
+let pushTimer = null;
 
 let settings = { engine: 'piper', edgeVoice: 'en-GB-SoniaNeural', rate: 1, auto: true, textSize: 19 };
 const st = { chapter: null, items: [], idx: 0, playing: false, loading: false, status: '' };
@@ -85,7 +126,10 @@ function stopAudio() {
   if (audio) { audio.onended = null; audio.onerror = null; audio.pause(); audio = null; }
 }
 
-function resume() {
+async function resume() {
+  setStatus('Finding where you left off\u2026');
+  await syncPull();
+  setStatus('');
   const r = settings.resume;
   if (r && r.url) loadChapter(r.url, true, r.para || 0);
 }
@@ -94,8 +138,10 @@ function saveProgress() {
   if (!st.chapter) return;
   const p = (st.items[st.idx] || {}).p || 0;
   const title = st.chapter.heading || st.chapter.title;
-  settings.resume = { url: st.chapter.url, para: p, title };
+  settings.resume = { url: st.chapter.url, para: p, title, updated: Date.now() };
   ipcRenderer.send('settings-set', { resume: settings.resume });
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(syncPush, 4000);
 }
 
 function play() {
@@ -108,6 +154,7 @@ function play() {
 }
 
 function pause() {
+  if (st.chapter) { clearTimeout(pushTimer); syncPush(); }
   st.playing = false;
   stopAudio();
   push();
@@ -367,15 +414,31 @@ ipcRenderer.invoke('settings-get').then((s) => {
   $('edgeVoice').value = settings.edgeVoice;
   $('auto').checked = settings.auto !== false;
   document.documentElement.style.setProperty('--text-size', (settings.textSize || 19) + 'px');
+  $('syncUser').value = settings.syncUser || '';
+  $('syncPin').value = settings.syncPin || '';
+  if (!syncOn()) $('syncRow').style.display = 'none';
   showResume();
   push();
+  syncPull().then((changed) => { if (changed) { showResume(); push(); } });
+});
+
+$('syncSave').addEventListener('click', () => {
+  settings.syncUser = $('syncUser').value.trim();
+  settings.syncPin = $('syncPin').value.trim();
+  ipcRenderer.send('settings-set', { syncUser: settings.syncUser, syncPin: settings.syncPin });
+  setStatus(settings.syncUser ? 'Syncing as "' + settings.syncUser + '". Use the same name on your phone.' : 'Sync turned off');
+  syncPull().then((changed) => { if (changed) { showResume(); push(); } });
+  setTimeout(() => { if (st.status.startsWith('Sync')) setStatus(''); }, 5000);
 });
 
 /** On the empty screen, offers to carry on from where you left off. */
 function showResume() {
   const r = settings.resume;
+  const old = document.getElementById('resumeBox');
+  if (old) old.remove();
   if (st.chapter || !r || !r.url) return;
   const box = document.createElement('div');
+  box.id = 'resumeBox';
   box.className = 'empty';
   box.style.marginTop = '18px';
   const b = document.createElement('button');

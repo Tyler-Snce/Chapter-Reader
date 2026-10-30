@@ -138,6 +138,52 @@ class MainActivity : Activity(), ReaderService.Listener {
         row2.addView(bubbleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(row2)
 
+        // Sync: continue on another device (phone or PC) under the same name
+        val row3 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(px(6), 0, px(6), px(8))
+        }
+        val userBox = EditText(this).apply {
+            setSingleLine()
+            hint = "Sync name"
+            textSize = 14f
+            setTextColor(FG)
+            setHintTextColor(MUTED)
+            background = rounded(SURFACE, 10)
+            setPadding(px(10), px(8), px(10), px(8))
+            setText(prefs.getString("syncUser", ""))
+        }
+        val pinBox = EditText(this).apply {
+            setSingleLine()
+            hint = "PIN (optional)"
+            textSize = 14f
+            setTextColor(FG)
+            setHintTextColor(MUTED)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            background = rounded(SURFACE, 10)
+            setPadding(px(10), px(8), px(10), px(8))
+            setText(prefs.getString("syncPin", ""))
+        }
+        row3.addView(userBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.3f).apply { marginEnd = px(6) })
+        row3.addView(pinBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = px(6) })
+        row3.addView(button("Save") {
+            prefs.edit()
+                .putString("syncUser", userBox.text.toString().trim())
+                .putString("syncPin", pinBox.text.toString().trim())
+                .apply()
+            (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(userBox.windowToken, 0)
+            userBox.clearFocus(); pinBox.clearFocus()
+            val name = userBox.text.toString().trim()
+            Toast.makeText(
+                this,
+                if (name.isEmpty()) "Sync turned off" else "Syncing as \"$name\". Use the same name on your other devices.",
+                Toast.LENGTH_LONG
+            ).show()
+            svc()?.syncNow()
+        }, LinearLayout.LayoutParams(px(70), LinearLayout.LayoutParams.WRAP_CONTENT))
+        if (Sync.configured) root.addView(row3)
+
         setContentView(root)
 
         // Browser settings
