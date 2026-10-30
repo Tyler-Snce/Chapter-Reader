@@ -242,7 +242,7 @@ ipcMain.on('drag-end', () => {
 // ---------- tray icon and shortcuts ----------
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(__dirname, 'icon.png'));
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
   tray = new Tray(icon);
   tray.setToolTip('Chapter Reader');
   tray.setContextMenu(Menu.buildFromTemplate([

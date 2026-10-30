@@ -27,15 +27,26 @@
       "reader.js",
       "extract.js",
       "icon.png",
-      "package.json"
+      "package.json",
+      "tray.png"
     ],
     "extraResources": [
-      { "from": "piper", "to": "piper" },
-      { "from": "voices", "to": "voices" },
-      { "from": "browser-url.ps1", "to": "browser-url.ps1" }
+      {
+        "from": "piper",
+        "to": "piper"
+      },
+      {
+        "from": "voices",
+        "to": "voices"
+      },
+      {
+        "from": "browser-url.ps1",
+        "to": "browser-url.ps1"
+      }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "icon.png"
     },
     "nsis": {
       "oneClick": true,
@@ -43,5 +54,6 @@
       "createDesktopShortcut": true,
       "shortcutName": "Chapter Reader"
     }
-  }
+  },
+  "author": "Tyler-Snce"
 }
