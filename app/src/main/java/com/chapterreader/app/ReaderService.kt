@@ -11,6 +11,7 @@ import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.MediaMetadata
+import android.media.MediaPlayer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.net.Uri
@@ -26,6 +27,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.webkit.CookieManager
 import android.widget.Toast
 import org.jsoup.Jsoup
+import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
 
@@ -78,6 +80,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
+    private val audioIo = Executors.newSingleThreadExecutor()
     private lateinit var tts: TextToSpeech
     private lateinit var session: MediaSession
     private lateinit var prefs: SharedPreferences
@@ -167,6 +170,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     /** Connects to the phone's chosen voice engine (SherpaTTS, Google, Samsung...). */
     private fun startEngine() {
+        if (::tts.isInitialized) clearRecordings()
         engineName = systemEngine()
         engineReportsWords = false
         charsPerSecond = 0f
@@ -217,16 +221,16 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             }
 
             override fun onDone(utteranceId: String?) {
-                handler.post { onPieceDone(utteranceId) }
+                handler.post { if (isRenderId(utteranceId)) onRendered(utteranceId, true) else onPieceDone(utteranceId) }
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                handler.post { onSpeechError(utteranceId) }
+                handler.post { if (isRenderId(utteranceId)) onRendered(utteranceId, false) else onSpeechError(utteranceId) }
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
-                handler.post { onSpeechError(utteranceId) }
+                handler.post { if (isRenderId(utteranceId)) onRendered(utteranceId, false) else onSpeechError(utteranceId) }
             }
         })
         if (playWhenReady) {
@@ -260,6 +264,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         token++
+        try { clearRecordings() } catch (_: Exception) {}
+        audioIo.shutdownNow()
         try { tts.stop(); tts.shutdown() } catch (_: Exception) {}
         releaseWake()
         bubble?.hide()
@@ -282,6 +288,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     // ---------- chapter ----------
 
     private fun setChapter(ch: Chapter, startPara: Int) {
+        clearRecordings()
         items.clear()
         if (ch.heading.isNotEmpty() && ch.heading != ch.paras.firstOrNull()) {
             Extractor.chunks(ch.heading).forEach { items.add(Item(-1, it, -1)) }
@@ -383,7 +390,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         playing = false
         playWhenReady = false
         token++
-        if (ttsReady) tts.stop()
+        if (recorded) stopPlayers() else if (ttsReady) tts.stop()
         releaseWake()
         notifyState()
     }
@@ -406,6 +413,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private fun speakCurrent() {
         token++
         if (idx >= items.size) { chapterFinished(); return }
+        if (recorded) { playRecorded(); return }
         tts.setSpeechRate(rate)
         queuedUpTo = idx - 1
         queueMore(flush = true)
@@ -432,6 +440,183 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         idx = i
         val p = items.getOrNull(i)?.p ?: return
         if (p >= 0 && p != oldP) each { it.onParagraph(p) }
+    }
+
+    // ---------- recorded playback (for engines like SherpaTTS) ----------
+    // The voice records each piece to a file ahead of time; the app trims long
+    // pauses and plays the files back to back. This gives smooth reading, a word
+    // highlight that matches the audio, and speed control without a pitch change.
+
+    private val recorded: Boolean
+        get() = engineName?.contains("google", ignoreCase = true) != true
+    private var gen = 0
+    private val files = HashMap<Int, File>()
+    private val recording = HashSet<Int>()
+    private val failed = HashSet<Int>()
+    private var player: MediaPlayer? = null
+    private var playerIdx = -1
+    private var nextPlayer: MediaPlayer? = null
+    private var nextIdx = -1
+    private var waiting = -1
+
+    private fun recDir(): File = File(cacheDir, "voice").apply { mkdirs() }
+    private fun isRenderId(id: String?) = id?.startsWith("r:") == true
+
+    private fun clearRecordings() {
+        gen++
+        stopPlayers()
+        files.clear(); recording.clear(); failed.clear()
+        try { if (ttsReady) tts.stop() } catch (_: Exception) {}
+        recDir().listFiles()?.forEach { it.delete() }
+    }
+
+    private fun stopPlayers() {
+        handler.removeCallbacks(positionTicker)
+        try { player?.release() } catch (_: Exception) {}
+        try { nextPlayer?.release() } catch (_: Exception) {}
+        player = null; nextPlayer = null
+        playerIdx = -1; nextIdx = -1; waiting = -1
+    }
+
+    private fun record(i: Int) {
+        if (i < 0 || i >= items.size || files.containsKey(i) || recording.contains(i) || failed.contains(i)) return
+        recording.add(i)
+        tts.setSpeechRate(1f)
+        val f = File(recDir(), "$gen-$i.wav")
+        if (tts.synthesizeToFile(items[i].text, Bundle(), f, "r:$gen:$i") != TextToSpeech.SUCCESS) {
+            recording.remove(i); failed.add(i)
+        }
+    }
+
+    private fun recordAhead() { for (k in 0..4) record(idx + k) }
+
+    private fun onRendered(id: String?, ok: Boolean) {
+        val parts = id?.split(':') ?: return
+        if (parts.size != 3) return
+        val g = parts[1]
+        val i = parts[2].toIntOrNull() ?: return
+        if (g != gen.toString()) return
+        recording.remove(i)
+        val f = File(recDir(), "$g-$i.wav")
+        if (!ok || !f.exists() || f.length() <= 44) { failed.add(i); fileReady(i); return }
+        audioIo.execute {
+            Silence.tighten(f)
+            handler.post {
+                if (g != gen.toString()) return@post
+                files[i] = f
+                fileReady(i)
+            }
+        }
+    }
+
+    private fun fileReady(i: Int) {
+        if (!playing) return
+        if (i == waiting) startPlayer(i)
+        else if (i == playerIdx + 1 && nextPlayer == null) prepareNext(i)
+    }
+
+    private fun makePlayer(f: File): MediaPlayer? = try {
+        MediaPlayer().apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            setDataSource(f.path)
+            prepare()
+        }
+    } catch (_: Exception) { null }
+
+    private fun prepareNext(i: Int) {
+        val f = files[i] ?: return
+        try { nextPlayer?.release() } catch (_: Exception) {}
+        nextPlayer = makePlayer(f)
+        nextIdx = if (nextPlayer != null) i else -1
+    }
+
+    /** Starts reading from [idx] using recorded pieces. */
+    private fun playRecorded() {
+        stopPlayers()
+        val p = items[idx].p
+        if (p >= 0) each { it.onParagraph(p) }
+        recordAhead()
+        if (files.containsKey(idx)) startPlayer(idx) else if (failed.contains(idx)) skipFrom(idx) else waiting = idx
+    }
+
+    private fun skipFrom(i: Int) {
+        idx = i + 1
+        if (idx >= items.size) { chapterFinished(); return }
+        playRecorded()
+    }
+
+    private fun startPlayer(i: Int, ready: MediaPlayer? = null) {
+        waiting = -1
+        val mp = ready ?: files[i]?.let { makePlayer(it) }
+        if (mp == null) { skipFrom(i); return }
+        try { player?.release() } catch (_: Exception) {}
+        player = mp
+        playerIdx = i
+        val oldP = items.getOrNull(idx)?.p
+        idx = i
+        mp.setOnCompletionListener { done -> onPlayerDone(done) }
+        try { mp.playbackParams = mp.playbackParams.setSpeed(rate) } catch (_: Exception) {}
+        mp.start()
+        errors = 0
+        val p = items[i].p
+        if (p >= 0 && p != oldP) each { it.onParagraph(p) }
+        handler.removeCallbacks(positionTicker)
+        handler.post(positionTicker)
+        if (files.containsKey(i + 1)) prepareNext(i + 1)
+        recordAhead()
+    }
+
+    private fun onPlayerDone(mp: MediaPlayer) {
+        if (mp !== player || !playing) return
+        val i = playerIdx + 1
+        if (i >= items.size) {
+            stopPlayers()
+            idx = items.size
+            chapterFinished()
+            return
+        }
+        val n = nextPlayer
+        if (n != null && nextIdx == i) {
+            nextPlayer = null; nextIdx = -1
+            startPlayer(i, n)
+        } else if (failed.contains(i)) {
+            skipFrom(i)
+        } else {
+            try { player?.release() } catch (_: Exception) {}
+            player = null
+            idx = i
+            waiting = i
+            if (files.containsKey(i)) startPlayer(i) else record(i)
+            recordAhead()
+        }
+    }
+
+    /** Moves the word highlight along with the audio actually playing. */
+    private val positionTicker = object : Runnable {
+        override fun run() {
+            val mp = player ?: return
+            if (!playing) return
+            try {
+                val item = items.getOrNull(playerIdx)
+                val dur = mp.duration
+                if (item != null && item.p >= 0 && item.offset >= 0 && dur > 0) {
+                    val t = item.text
+                    val frac = (mp.currentPosition.toFloat() / dur).coerceIn(0f, 1f)
+                    val pos = (frac * t.length).toInt().coerceIn(0, t.length - 1)
+                    var start = t.lastIndexOf(' ', pos) + 1
+                    if (start > pos) start = pos
+                    var end = t.indexOf(' ', pos)
+                    if (end < 0) end = t.length
+                    if (end > start) each { it.onWord(item.p, item.offset + start, item.offset + end) }
+                }
+            } catch (_: Exception) {}
+            handler.postDelayed(this, 70)
+        }
     }
 
     // ---------- estimated word highlight (for engines like SherpaTTS) ----------
@@ -550,7 +735,10 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     fun setRate(r: Float) {
         rate = Math.round(r.coerceIn(0.5f, 4f) * 10f) / 10f
         prefs.edit().putFloat("rate", rate).apply()
-        if (playing) speakCurrent()
+        if (recorded) {
+            // Speed changes apply instantly, without changing the pitch
+            player?.let { try { it.playbackParams = it.playbackParams.setSpeed(rate) } catch (_: Exception) {} }
+        } else if (playing) speakCurrent()
         notifyState()
     }
 
