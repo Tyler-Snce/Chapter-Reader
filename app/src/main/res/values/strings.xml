@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="a11y_desc">Lets the Chapter Reader bubble see which web page your browser is showing, so it can read that page aloud. It only looks at the browser address bar, and only when you tap the bubble.</string>
+</resources>

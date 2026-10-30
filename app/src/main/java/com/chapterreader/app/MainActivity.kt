@@ -193,6 +193,11 @@ class MainActivity : Activity(), ReaderService.Listener {
         ReaderService.listener = this
         ReaderService.appVisible = true
         svc()?.updateBubble()
+        if (prefs.getBoolean("bubble", true) && bubbleReady()) startBubble()
+        if (prefs.getBoolean("bubbleSetup", false) && Settings.canDrawOverlays(this)) {
+            prefs.edit().putBoolean("bubbleSetup", false).apply()
+            if (!BrowserWatcher.isEnabled(this)) showAccessibilityHelp()
+        }
         refresh()
         val s = svc()
         if (s != null && s.playing && s.chapter != null && !sameUrl(web.url, s.chapter?.url)) web.loadUrl(s.chapter!!.url)
@@ -286,8 +291,52 @@ class MainActivity : Activity(), ReaderService.Listener {
 
     private fun setBubble(on: Boolean) {
         prefs.edit().putBoolean("bubble", on).apply()
-        if (on && !Settings.canDrawOverlays(this)) openOverlaySettings()
+        if (on) {
+            when {
+                !Settings.canDrawOverlays(this) -> {
+                    prefs.edit().putBoolean("bubbleSetup", true).apply()
+                    openOverlaySettings()
+                }
+                !BrowserWatcher.isEnabled(this) -> showAccessibilityHelp()
+                else -> startBubble()
+            }
+        }
         svc()?.updateBubble()
+        refresh()
+    }
+
+    /** Starts the reader in the background so the bubble shows over other apps. */
+    private fun startBubble() {
+        if (svc() != null) return
+        try {
+            startForegroundService(Intent(this, ReaderService::class.java).setAction(ReaderService.ACTION_IDLE))
+        } catch (_: Exception) {}
+    }
+
+    private fun bubbleReady(): Boolean =
+        Settings.canDrawOverlays(this) && BrowserWatcher.isEnabled(this)
+
+    private fun showAccessibilityHelp() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("One more step for the bubble")
+            .setMessage(
+                "So the bubble can tell which page your browser is on, switch on Chapter Reader in Accessibility:\n\n" +
+                    "1. Tap Open settings.\n" +
+                    "2. Tap Installed apps (or Downloaded apps), then Chapter Reader bubble, and switch it on.\n\n" +
+                    "If the switch is greyed out: come back, tap App info, tap ⋮ (top right) and choose " +
+                    "Allow restricted settings, then try again.\n\n" +
+                    "It only reads your browser's address bar, and only when you tap the bubble."
+            )
+            .setPositiveButton("Open settings") { _, _ ->
+                try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (_: Exception) {}
+            }
+            .setNeutralButton("App info") { _, _ ->
+                try {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                } catch (_: Exception) {}
+            }
+            .setNegativeButton("Later", null)
+            .show()
     }
 
     private fun maybeAskOverlay() {
@@ -332,12 +381,13 @@ class MainActivity : Activity(), ReaderService.Listener {
             else -> "▶"
         }
         statusText.text = when {
-            s == null -> "Tip: in your own browser tap Share → Chapter Reader"
-            s.status.isNotEmpty() -> s.status
+            !bubbleReady() -> "Tick Bubble to read pages from your own browser"
+            s != null && s.status.isNotEmpty() -> s.status
+            s == null || s.chapter == null -> "Bubble ready: open a chapter in your browser and tap it"
             else -> s.chapterName
         }
         autoBox.isChecked = s?.autoNext ?: prefs.getBoolean("auto", true)
-        bubbleBox.isChecked = prefs.getBoolean("bubble", true) && Settings.canDrawOverlays(this)
+        bubbleBox.isChecked = prefs.getBoolean("bubble", true) && bubbleReady()
     }
 
     // ---------- service callbacks ----------

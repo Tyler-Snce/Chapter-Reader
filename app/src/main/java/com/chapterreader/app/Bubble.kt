@@ -70,6 +70,7 @@ class Bubble(private val svc: ReaderService) {
             setColor(0xF01D1B22.toInt())
         }
         val row1 = row()
+        row1.addView(button("📖") { panel.visibility = View.GONE; svc.readFromBrowser() })
         row1.addView(button("⏮") { svc.prevChapter() })
         row1.addView(button("⏪") { svc.jumpPara(-1) })
         row1.addView(button("⏩") { svc.jumpPara(1) })
@@ -154,7 +155,7 @@ class Bubble(private val svc: ReaderService) {
                     if (dragging) {
                         prefs.edit().putInt("bx", params.x).putInt("by", params.y).apply()
                     } else if (!longPressed) {
-                        svc.toggle()
+                        if (svc.chapter == null) svc.readFromBrowser() else svc.toggle()
                         if (!prefs.getBoolean("bubbleTipShown", false)) {
                             prefs.edit().putBoolean("bubbleTipShown", true).apply()
                             Toast.makeText(svc, "Tip: long-press the bubble for more controls", Toast.LENGTH_LONG).show()
@@ -186,6 +187,7 @@ class Bubble(private val svc: ReaderService) {
     fun update() {
         ball.text = when {
             svc.loading -> "…"
+            svc.chapter == null -> "📖"
             svc.playing -> "⏸"
             else -> "▶"
         }

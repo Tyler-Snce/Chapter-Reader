@@ -52,6 +52,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_PREV_CH = "com.chapterreader.PREV_CH"
         const val ACTION_STOP = "com.chapterreader.STOP"
         const val ACTION_LOAD_URL = "com.chapterreader.LOAD_URL"
+        const val ACTION_IDLE = "com.chapterreader.IDLE"
         const val EXTRA_URL = "url"
         const val EXTRA_PLAY = "play"
 
@@ -198,6 +199,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                 }
             }
             ACTION_LOAD_URL -> loadChapter(intent.getStringExtra(EXTRA_URL), true)
+            ACTION_IDLE -> notifyState()
             ACTION_TOGGLE -> toggle()
             ACTION_NEXT_CH -> nextChapter()
             ACTION_PREV_CH -> prevChapter()
@@ -414,7 +416,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     fun updateBubble() {
         val want = prefs.getBoolean("bubble", true) && !appVisible &&
-            Settings.canDrawOverlays(this) && chapter != null
+            Settings.canDrawOverlays(this)
         if (want && bubble == null) {
             bubble = Bubble(this).also { it.show() }
         } else if (!want && bubble != null) {
@@ -427,6 +429,31 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     fun hideBubbleForNow() {
         prefs.edit().putBoolean("bubble", false).apply()
         updateBubble()
+    }
+
+    /** Reads whatever page your browser is showing. */
+    fun readFromBrowser() {
+        val w = BrowserWatcher.instance
+        if (w == null) {
+            Toast.makeText(this, "Turn on the Chapter Reader bubble in the app first", Toast.LENGTH_LONG).show()
+            openApp()
+            return
+        }
+        if (loading) return
+        status = "Finding your page\u2026"
+        notifyState()
+        w.currentUrl { url ->
+            handler.post {
+                if (url == null) {
+                    status = ""
+                    notifyState()
+                    Toast.makeText(this, "Open a chapter in your browser first, then tap \uD83D\uDCD6", Toast.LENGTH_LONG).show()
+                } else {
+                    status = ""
+                    loadChapter(url, true)
+                }
+            }
+        }
     }
 
     fun openInBrowser() {
@@ -494,6 +521,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         )
         val text = when {
             status.isNotEmpty() -> status
+            chapter == null -> "Tap the bubble to read the page you're on"
             else -> String.format(Locale.UK, "%s · %.1f×", siteName(), rate)
         }
         return Notification.Builder(this, CHANNEL)
