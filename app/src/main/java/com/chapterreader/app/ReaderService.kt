@@ -41,9 +41,11 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         fun onParagraph(index: Int)
         fun onChapterChanged(url: String)
         fun onLoadFailed(url: String)
+        /** The word being spoken: character range [start, end) within paragraph [para]. */
+        fun onWord(para: Int, start: Int, end: Int) {}
     }
 
-    private data class Item(val p: Int, val text: String)
+    private data class Item(val p: Int, val text: String, val offset: Int)
 
     companion object {
         const val ACTION_LOAD = "com.chapterreader.LOAD"
@@ -177,6 +179,15 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                 handler.post { if (utteranceId == token.toString()) errors = 0 }
             }
 
+            override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+                handler.post {
+                    if (utteranceId != token.toString() || !playing) return@post
+                    val item = items.getOrNull(idx) ?: return@post
+                    if (item.p < 0 || item.offset < 0) return@post
+                    each { it.onWord(item.p, item.offset + start, item.offset + end) }
+                }
+            }
+
             override fun onDone(utteranceId: String?) {
                 handler.post {
                     if (utteranceId == token.toString() && playing) {
@@ -250,9 +261,18 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private fun setChapter(ch: Chapter, startPara: Int) {
         items.clear()
         if (ch.heading.isNotEmpty() && ch.heading != ch.paras.firstOrNull()) {
-            Extractor.chunks(ch.heading).forEach { items.add(Item(-1, it)) }
+            Extractor.chunks(ch.heading).forEach { items.add(Item(-1, it, -1)) }
         }
-        ch.paras.forEachIndexed { pi, t -> Extractor.chunks(t).forEach { items.add(Item(pi, it)) } }
+        ch.paras.forEachIndexed { pi, t ->
+            var cursor = 0
+            Extractor.chunks(t).forEach { c ->
+                // Where this piece starts in the paragraph, for word highlighting
+                var at = t.indexOf(c, cursor)
+                if (at < 0) at = t.indexOf(c.take(20), cursor)
+                items.add(Item(pi, c, at))
+                if (at >= 0) cursor = at + c.length
+            }
+        }
         idx = if (startPara > 0) items.indexOfFirst { it.p >= startPara }.coerceAtLeast(0) else 0
         chapter = ch
         status = ""
