@@ -82,6 +82,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private lateinit var session: MediaSession
     private lateinit var prefs: SharedPreferences
     private var ttsReady = false
+    private var engineName: String? = null
     private var playWhenReady = false
     private var token = 0
     private var errors = 0
@@ -158,7 +159,26 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             startForeground(NOTIF_ID, n)
         }
 
+        startEngine()
+    }
+
+    private fun systemEngine(): String? =
+        try { Settings.Secure.getString(contentResolver, "tts_default_synth") } catch (_: Exception) { null }
+
+    /** Connects to the phone's chosen voice engine (SherpaTTS, Google, Samsung...). */
+    private fun startEngine() {
+        engineName = systemEngine()
+        ttsReady = false
         tts = TextToSpeech(this, this)
+    }
+
+    /** If you've picked a different voice engine in Settings, switch to it. */
+    private fun checkEngineChanged(): Boolean {
+        val now = systemEngine()
+        if (now == null || now == engineName) return false
+        try { tts.stop(); tts.shutdown() } catch (_: Exception) {}
+        startEngine()
+        return true
     }
 
     override fun onInit(result: Int) {
@@ -345,7 +365,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     fun play() {
         if (chapter == null || items.isEmpty() || loading) return
-        if (!ttsReady) { playWhenReady = true; return }
+        if (checkEngineChanged() || !ttsReady) { playWhenReady = true; return }
         if (idx >= items.size) idx = 0
         playing = true
         errors = 0
