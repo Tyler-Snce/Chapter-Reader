@@ -482,10 +482,24 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private fun record(i: Int) {
         if (i < 0 || i >= items.size || files.containsKey(i) || recording.contains(i) || failed.contains(i)) return
         recording.add(i)
-        tts.setSpeechRate(1f)
+        tts.setSpeechRate(rate)
         val f = File(recDir(), "$gen-$i.wav")
         if (tts.synthesizeToFile(items[i].text, Bundle(), f, "r:$gen:$i") != TextToSpeech.SUCCESS) {
             recording.remove(i); failed.add(i)
+        }
+    }
+
+    private fun rerecordAhead() {
+        gen++
+        val keep = playerIdx
+        files.keys.filter { it != keep }.forEach { files.remove(it)?.delete() }
+        recording.clear(); failed.clear()
+        try { nextPlayer?.release() } catch (_: Exception) {}
+        nextPlayer = null; nextIdx = -1
+        try { if (ttsReady) tts.stop() } catch (_: Exception) {}
+        if (playing) {
+            if (waiting >= 0) { record(waiting); setWaiting(waiting) }
+            recordAhead()
         }
     }
 
@@ -563,7 +577,6 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val oldP = items.getOrNull(idx)?.p
         idx = i
         mp.setOnCompletionListener { done -> onPlayerDone(done) }
-        try { mp.playbackParams = mp.playbackParams.setSpeed(rate) } catch (_: Exception) {}
         mp.start()
         errors = 0
         val p = items[i].p
@@ -642,7 +655,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             stallTipShown = true
             Toast.makeText(
                 this,
-                "Your voice can't keep up at this speed, which causes pauses. Set the speed inside SherpaTTS instead and keep Chapter Reader on 1.0\u00d7, or pick a \"medium\" voice.",
+                "Your voice can't record fast enough, which causes pauses. In SherpaTTS, tick \"Apply system settings\" and set its speed to 1.0, or choose a \"medium\" voice",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -788,8 +801,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         rate = Math.round(r.coerceIn(0.5f, 4f) * 10f) / 10f
         prefs.edit().putFloat("rate", rate).apply()
         if (recorded) {
-            // Speed changes apply instantly, without changing the pitch
-            player?.let { try { it.playbackParams = it.playbackParams.setSpeed(rate) } catch (_: Exception) {} }
+            // Upcoming sentences are re-recorded at the new speed
+            rerecordAhead()
         } else if (playing) speakCurrent()
         notifyState()
     }
