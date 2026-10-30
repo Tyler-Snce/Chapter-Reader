@@ -52,7 +52,7 @@ object Extractor {
         var best: Pair<Element, IntArray>? = null
         for (g in groups) if (best == null || g.second[0] > best.second[0]) best = g
         if (best != null && best.second[0] > 300) {
-            return best.first.children()
+            return best.first.children().toList()
                 .filter { it.tagName() == "p" }
                 .map { clean(it.text()) }
                 .filter { it.isNotEmpty() }
