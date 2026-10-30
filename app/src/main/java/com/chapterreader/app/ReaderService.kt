@@ -591,8 +591,24 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             player = null
             idx = i
             waiting = i
-            if (files.containsKey(i)) startPlayer(i) else record(i)
+            if (files.containsKey(i)) startPlayer(i) else { record(i); noteStall() }
             recordAhead()
+        }
+    }
+
+    private var stalls = 0
+    private var stallTipShown = false
+
+    /** The voice couldn't record the next piece in time. Suggest a fix once. */
+    private fun noteStall() {
+        stalls++
+        if (stalls >= 3 && !stallTipShown) {
+            stallTipShown = true
+            Toast.makeText(
+                this,
+                "Your voice can't keep up at this speed, which causes pauses. Set the speed inside SherpaTTS instead and keep Chapter Reader on 1.0\u00d7, or pick a \"medium\" voice.",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 

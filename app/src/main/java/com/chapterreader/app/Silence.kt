@@ -27,6 +27,7 @@ object Silence {
             var channels = 1
             var rate = 22050
             var bits = 16
+            var format = 1
             var dataOff = -1
             var dataLen = 0
             while (pos + 8 <= b.size) {
@@ -34,6 +35,7 @@ object Silence {
                 val len = le32(b, pos + 4)
                 val body = pos + 8
                 if (id == "fmt ") {
+                    format = le16(b, body)
                     channels = le16(b, body + 2)
                     rate = le32(b, body + 4)
                     bits = le16(b, body + 14)
@@ -44,9 +46,12 @@ object Silence {
                 }
                 pos = body + len + (len and 1)
             }
-            if (dataOff < 0 || bits != 16 || channels < 1 || rate <= 0) return
+            val isFloat = format == 3 && bits == 32
+            if (dataOff < 0 || channels < 1 || rate <= 0) return
+            if (!(bits == 16 && format == 1) && !isFloat) return
 
-            val frame = 2 * channels
+            val bytesPer = bits / 8
+            val frame = bytesPer * channels
             val winFrames = max(1, rate / 100)           // 10 ms windows
             val winBytes = winFrames * frame
             val nWin = dataLen / winBytes
@@ -57,9 +62,11 @@ object Silence {
                 var o = dataOff + w * winBytes
                 val end = o + winBytes
                 while (o < end) {
-                    val s = (le16(b, o).toShort()).toInt()
+                    val s = if (isFloat) {
+                        (java.lang.Float.intBitsToFloat(le32(b, o)) * 32767f).toInt()
+                    } else (le16(b, o).toShort()).toInt()
                     if (abs(s) > peak) peak = abs(s)
-                    o += 2
+                    o += bytesPer
                 }
                 peak > THRESHOLD
             }
@@ -99,12 +106,12 @@ object Silence {
             put32(4, 36 + pcm)
             "WAVEfmt ".toByteArray().copyInto(res, 8)
             put32(16, 16)
-            put16(20, 1)
+            put16(20, if (isFloat) 3 else 1)
             put16(22, channels)
             put32(24, rate)
             put32(28, rate * frame)
             put16(32, frame)
-            put16(34, 16)
+            put16(34, bits)
             "data".toByteArray().copyInto(res, 36)
             put32(40, pcm)
             f.writeBytes(res)
