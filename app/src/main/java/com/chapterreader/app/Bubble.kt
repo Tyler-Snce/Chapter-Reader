@@ -28,7 +28,7 @@ class Bubble(private val svc: ReaderService) {
     private val handler = Handler(Looper.getMainLooper())
 
     private val root = LinearLayout(svc)
-    private val ball = TextView(svc)
+    private val ball = android.widget.ImageView(svc)
     private val panel = LinearLayout(svc)
     private val rateLabel = TextView(svc)
     private var shown = false
@@ -50,10 +50,9 @@ class Bubble(private val svc: ReaderService) {
     init {
         root.orientation = LinearLayout.VERTICAL
 
-        ball.text = "▶"
-        ball.textSize = 22f
-        ball.setTextColor(0xFFFFFFFF.toInt())
-        ball.gravity = Gravity.CENTER
+        ball.setImageResource(R.drawable.ic_play)
+        ball.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        ball.setPadding(px(15), px(15), px(15), px(15))
         ball.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(0xEE6B4FD8.toInt())
@@ -250,12 +249,14 @@ class Bubble(private val svc: ReaderService) {
     }
 
     fun update() {
-        ball.text = when {
-            svc.loading -> "…"
-            svc.chapter == null -> "📖"
-            svc.playing -> "⏸"
-            else -> "▶"
-        }
+        ball.setImageResource(
+            when {
+                svc.loading -> R.drawable.ic_dots
+                svc.chapter == null -> R.drawable.ic_book
+                svc.playing -> R.drawable.ic_pause
+                else -> R.drawable.ic_play
+            }
+        )
         rateLabel.text = String.format(Locale.UK, "%.1f×", svc.rate)
     }
 }

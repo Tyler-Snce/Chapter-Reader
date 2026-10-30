@@ -7,6 +7,10 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.SystemClock
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -102,7 +106,10 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
             setBackgroundColor(PANEL)
             setPadding(px(8), px(8), px(8), px(10))
         }
-        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val row1 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         row1.addView(button("⏮\nChapter") { svc()?.prevChapter() }, weighted())
         row1.addView(button("⏪\nPara") { svc()?.jumpPara(-1) }, weighted())
         playBtn = button("▶", ACCENT) { svc()?.toggle() }.apply { textSize = 22f }
@@ -122,13 +129,12 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
             setTextColor(TEXT_ON)
             gravity = Gravity.CENTER
         }
-        row2.addView(rateText, LinearLayout.LayoutParams(px(52), px(40)))
+        row2.addView(rateText, small())
         row2.addView(button("+") { svc()?.let { it.setRate(it.rate + 0.1f) } }, small())
-        row2.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         row2.addView(button("A−") { setText(textSize - 1f) }, small())
         row2.addView(button("A+") { setText(textSize + 1f) }, small())
         row2.addView(button("◎ Follow") { lastTouch = 0; scrollToCurrent(true) },
-            LinearLayout.LayoutParams(px(84), px(40)).apply { marginStart = px(6) })
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.6f).apply { setMargins(px(3), 0, px(3), 0) })
         controls.addView(row2)
         root.addView(controls)
 
@@ -208,6 +214,7 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
             paraViews.getOrNull(current)?.apply {
                 background = null
                 setTextColor(TEXT)
+                text = text.toString()
             }
             current = i
             paraViews.getOrNull(i)?.apply {
@@ -273,6 +280,31 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
 
     override fun onChapterChanged(url: String) = rebuild()
 
+    override fun onWord(para: Int, start: Int, end: Int) {
+        if (para != current) highlight(para, smooth = true)
+        val tv = paraViews.getOrNull(para) ?: return
+        val plain = tv.text.toString()
+        if (start < 0 || end > plain.length || start >= end) return
+        val span = SpannableString(plain)
+        span.setSpan(BackgroundColorSpan(WORD_BG), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        span.setSpan(ForegroundColorSpan(WORD_FG), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        tv.text = span
+        keepWordVisible(tv, start)
+    }
+
+    /** In long paragraphs, keeps the line being read on screen. */
+    private fun keepWordVisible(tv: TextView, offset: Int) {
+        if (SystemClock.uptimeMillis() - lastTouch < 5000) return
+        val layout = tv.layout ?: return
+        val line = layout.getLineForOffset(offset)
+        val lineY = tv.top + tv.paddingTop + layout.getLineTop(line)
+        val visTop = scroll.scrollY
+        val visBottom = visTop + scroll.height
+        if (lineY < visTop + scroll.height / 6 || lineY > visBottom - scroll.height / 3) {
+            scroll.smoothScrollTo(0, (lineY - scroll.height / 3).coerceAtLeast(0))
+        }
+    }
+
     override fun onLoadFailed(url: String) = refresh()
 
     // ---------- helpers ----------
@@ -287,14 +319,16 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
             setColor(color)
         }
         isClickable = true
+        minHeight = px(44)
+        setPadding(px(2), px(6), px(2), px(6))
         setOnClickListener { onTap() }
     }
 
-    private fun weighted() = LinearLayout.LayoutParams(0, px(54), 1f).apply {
+    private fun weighted() = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
         setMargins(px(3), 0, px(3), 0)
     }
 
-    private fun small() = LinearLayout.LayoutParams(px(46), px(40)).apply {
+    private fun small() = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
         setMargins(px(3), 0, px(3), 0)
     }
 
@@ -307,5 +341,7 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         private val TEXT = 0xFFB9B3C4.toInt()
         private val TEXT_ON = 0xFFF4F1F8.toInt()
         private val MUTED = 0xFF8E879C.toInt()
+        private val WORD_BG = 0xFF7B5CFF.toInt()
+        private val WORD_FG = 0xFFFFFFFF.toInt()
     }
 }
