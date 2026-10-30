@@ -196,25 +196,21 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         )
         tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {
-                handler.post { if (utteranceId == token.toString()) errors = 0 }
+                handler.post { onPieceStart(utteranceId) }
             }
 
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
                 handler.post {
-                    if (utteranceId != token.toString() || !playing) return@post
-                    val item = items.getOrNull(idx) ?: return@post
+                    if (!playing) return@post
+                    val i = pieceIndex(utteranceId) ?: return@post
+                    val item = items.getOrNull(i) ?: return@post
                     if (item.p < 0 || item.offset < 0) return@post
                     each { it.onWord(item.p, item.offset + start, item.offset + end) }
                 }
             }
 
             override fun onDone(utteranceId: String?) {
-                handler.post {
-                    if (utteranceId == token.toString() && playing) {
-                        idx++
-                        speakCurrent()
-                    }
-                }
+                handler.post { onPieceDone(utteranceId) }
             }
 
             @Deprecated("Deprecated in Java")
@@ -385,17 +381,73 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     fun toggle() { if (playing) pause() else play() }
 
+    // The next few pieces are handed to the voice engine in advance, so it can
+    // prepare them while the current one plays. This removes the gap between sentences.
+    private var queuedUpTo = -1
+    private val queueAhead = 3
+
+    private fun pieceId(i: Int) = "$token:$i"
+
+    private fun pieceIndex(id: String?): Int? {
+        val parts = id?.split(':') ?: return null
+        if (parts.size != 2 || parts[0] != token.toString()) return null
+        return parts[1].toIntOrNull()
+    }
+
     private fun speakCurrent() {
-        val my = ++token
+        token++
         if (idx >= items.size) { chapterFinished(); return }
-        val item = items[idx]
-        if (item.p >= 0) each { it.onParagraph(item.p) }
         tts.setSpeechRate(rate)
-        tts.speak(item.text, TextToSpeech.QUEUE_FLUSH, Bundle(), my.toString())
+        queuedUpTo = idx - 1
+        queueMore(flush = true)
+        val p = items[idx].p
+        if (p >= 0) each { it.onParagraph(p) }
+    }
+
+    private fun queueMore(flush: Boolean) {
+        var first = flush
+        while (queuedUpTo < items.size - 1 && queuedUpTo < idx + queueAhead) {
+            queuedUpTo++
+            tts.speak(
+                items[queuedUpTo].text,
+                if (first) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,
+                Bundle(), pieceId(queuedUpTo)
+            )
+            first = false
+        }
+    }
+
+    private fun moveTo(i: Int) {
+        if (i <= idx && i != 0) return
+        val oldP = items.getOrNull(idx)?.p
+        idx = i
+        val p = items.getOrNull(i)?.p ?: return
+        if (p >= 0 && p != oldP) each { it.onParagraph(p) }
+    }
+
+    private fun onPieceStart(id: String?) {
+        if (!playing) return
+        val i = pieceIndex(id) ?: return
+        errors = 0
+        if (i != idx) moveTo(i)
+        queueMore(flush = false)
+    }
+
+    private fun onPieceDone(id: String?) {
+        if (!playing) return
+        val i = pieceIndex(id) ?: return
+        if (i >= items.size - 1) {
+            idx = items.size
+            chapterFinished()
+            return
+        }
+        if (idx <= i) moveTo(i + 1)
+        queueMore(flush = false)
     }
 
     private fun onSpeechError(utteranceId: String?) {
-        if (utteranceId != token.toString() || !playing) return
+        if (!playing) return
+        val i = pieceIndex(utteranceId) ?: return
         errors++
         if (errors > 3) {
             pause()
@@ -403,7 +455,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             notifyState()
             return
         }
-        idx++
+        idx = i + 1
         speakCurrent()
     }
 
