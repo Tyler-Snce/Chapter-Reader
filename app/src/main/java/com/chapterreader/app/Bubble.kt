@@ -87,6 +87,26 @@ class Bubble(private val svc: ReaderService) {
         row2.addView(button("✕") { panel.visibility = View.GONE; svc.hideBubbleForNow() })
         panel.addView(row1)
         panel.addView(row2)
+        // Big red button: stop reading and close Chapter Reader completely
+        val quit = TextView(svc).apply {
+            text = "✕  Quit Chapter Reader"
+            textSize = 16f
+            setTextColor(0xFFFFFFFF.toInt())
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                cornerRadius = 10 * dp
+                setColor(0xFFD93A3A.toInt())
+            }
+            setOnClickListener {
+                panel.visibility = View.GONE
+                Toast.makeText(svc, "Chapter Reader closed. Open the app to start it again.", Toast.LENGTH_SHORT).show()
+                svc.shutdown()
+            }
+        }
+        panel.addView(quit, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, px(48)
+        ).apply { setMargins(px(3), px(6), px(3), px(3)) })
         root.addView(panel, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply { topMargin = px(6) })
