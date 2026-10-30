@@ -27,11 +27,13 @@ jobs:
 
       - name: Check Android tools
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          ls "$ANDROID_HOME/platforms" || true
+          { echo "ANDROID_HOME=$ANDROID_HOME"; ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" || true; } | tee "$RUNNER_TEMP/setup.log"
 
       - name: Build the app
-        run: gradle assembleRelease --no-daemon --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk ChapterReader.apk
@@ -50,3 +52,14 @@ jobs:
             --title "Chapter Reader build ${{ github.run_number }}" \
             --notes "Tap ChapterReader.apk below to download." \
             --latest
+
+      - name: Save log for troubleshooting
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p /tmp/logs && cd /tmp/logs
+          cat "$RUNNER_TEMP/setup.log" "$RUNNER_TEMP/build.log" > build.log 2>/dev/null || echo "no log (failed before build)" > build.log
+          git init -q -b logs
+          git config user.name "build-bot"; git config user.email "build-bot@users.noreply.github.com"
+          git add build.log && git commit -qm "Build log ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs
