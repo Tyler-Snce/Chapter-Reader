@@ -1,0 +1,47 @@
+{
+  "name": "chapter-reader-pc",
+  "productName": "Chapter Reader",
+  "version": "1.0.0",
+  "description": "Reads web novel chapters aloud with a floating bubble",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.chapterreader.pc",
+    "productName": "Chapter Reader",
+    "files": [
+      "main.js",
+      "edge-tts.js",
+      "bubble.html",
+      "reader.html",
+      "reader.js",
+      "extract.js",
+      "icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "piper", "to": "piper" },
+      { "from": "voices", "to": "voices" },
+      { "from": "browser-url.ps1", "to": "browser-url.ps1" }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Chapter Reader"
+    }
+  }
+}

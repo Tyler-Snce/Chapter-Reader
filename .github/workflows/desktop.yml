@@ -1,0 +1,81 @@
+name: Build PC app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - name: Download Piper and the Cori voice
+        run: |
+          set -o pipefail
+          {
+            curl -sSLf -o piper.zip https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip
+            pwsh -NoProfile -Command "Expand-Archive -Path piper.zip -DestinationPath . -Force"
+            rm piper.zip
+            ls piper
+            mkdir -p voices
+            curl -sSLf -o voices/en_GB-cori-high.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/en_GB-cori-high.onnx
+            curl -sSLf -o voices/en_GB-cori-high.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/en_GB-cori-high.onnx.json
+            ls -la voices
+          } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+
+      - name: Test the Cori voice
+        run: |
+          set -o pipefail
+          echo "Hello from Chapter Reader." | ./piper/piper.exe --model voices/en_GB-cori-high.onnx --output_file test.wav 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          ls -la test.wav | tee -a "$RUNNER_TEMP/build.log"
+          rm test.wav
+
+      - name: Install
+        run: |
+          set -o pipefail
+          npm install --no-audit --no-fund 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+
+      - name: Build the installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          set -o pipefail
+          npx electron-builder --win nsis --x64 --publish never 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          cp dist/*.exe ChapterReader-PC-Setup.exe
+
+      - name: Publish download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete pc --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          gh release create pc ChapterReader-PC-Setup.exe \
+            --repo "${{ github.repository }}" \
+            --title "Chapter Reader for PC" \
+            --notes "Download ChapterReader-PC-Setup.exe below and run it. Build ${{ github.run_number }}." \
+            --latest=false
+
+      - name: Save log for troubleshooting
+        if: failure()
+        run: |
+          mkdir -p /tmp/logs && cd /tmp/logs
+          cp "$RUNNER_TEMP/build.log" build.log 2>/dev/null || echo "no log" > build.log
+          git init -q -b logs-desktop
+          git config user.name "build-bot"; git config user.email "build-bot@users.noreply.github.com"
+          git add build.log && git commit -qm "PC build log ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs-desktop

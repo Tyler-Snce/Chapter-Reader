@@ -4,3 +4,7 @@ app/build/
 local.properties
 *.iml
 .idea/
+desktop/node_modules/
+desktop/dist/
+desktop/piper/
+desktop/voices/
