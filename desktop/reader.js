@@ -35,7 +35,7 @@ function setChapter(ch) {
   renderText();
 }
 
-async function loadChapter(url, autoplay) {
+async function loadChapter(url, autoplay, startPara = 0) {
   if (!url || st.loading) return;
   const wasPlaying = st.playing || autoplay;
   stopAudio();
@@ -47,6 +47,11 @@ async function loadChapter(url, autoplay) {
     const ch = parseChapter(page.html, page.url);
     if (!ch) throw new Error('no story text was found on that page');
     setChapter(ch);
+    if (startPara > 0) {
+      const at = st.items.findIndex((it) => it.p >= startPara);
+      if (at >= 0) st.idx = at;
+      highlight(st.items[st.idx].p);
+    }
     st.loading = false;
     setStatus('');
     if (wasPlaying) play(); else push();
@@ -80,7 +85,21 @@ function stopAudio() {
   if (audio) { audio.onended = null; audio.onerror = null; audio.pause(); audio = null; }
 }
 
+function resume() {
+  const r = settings.resume;
+  if (r && r.url) loadChapter(r.url, true, r.para || 0);
+}
+
+function saveProgress() {
+  if (!st.chapter) return;
+  const p = (st.items[st.idx] || {}).p || 0;
+  const title = st.chapter.heading || st.chapter.title;
+  settings.resume = { url: st.chapter.url, para: p, title };
+  ipcRenderer.send('settings-set', { resume: settings.resume });
+}
+
 function play() {
+  if (!st.chapter && !st.loading) { resume(); return; }
   if (!st.chapter || st.loading || !st.items.length) return;
   if (st.idx >= st.items.length) st.idx = 0;
   st.playing = true;
@@ -210,6 +229,7 @@ function highlight(i) {
   if (!el) return;
   el.classList.add('cur');
   if (following()) el.scrollIntoView({ block: 'center' });
+  saveProgress();
 }
 
 function markWord(p, s, e) {
@@ -266,6 +286,8 @@ function push() {
   document.title = 'Chapter Reader' + (st.chapter ? ' – ' + title : '');
   ipcRenderer.send('state', {
     hasChapter: !!st.chapter, playing: st.playing, loading: st.loading,
+    hasResume: !st.chapter && !!(settings.resume && settings.resume.url),
+    resumeTitle: settings.resume ? settings.resume.title : '',
     rate: settings.rate, title: st.chapter ? title : '', status: st.status, progress: progressText(),
   });
 }
@@ -345,5 +367,21 @@ ipcRenderer.invoke('settings-get').then((s) => {
   $('edgeVoice').value = settings.edgeVoice;
   $('auto').checked = settings.auto !== false;
   document.documentElement.style.setProperty('--text-size', (settings.textSize || 19) + 'px');
+  showResume();
   push();
 });
+
+/** On the empty screen, offers to carry on from where you left off. */
+function showResume() {
+  const r = settings.resume;
+  if (st.chapter || !r || !r.url) return;
+  const box = document.createElement('div');
+  box.className = 'empty';
+  box.style.marginTop = '18px';
+  const b = document.createElement('button');
+  b.textContent = '\u25B6 Continue: ' + (r.title || 'your last chapter');
+  b.style.cssText = 'width:100%;min-height:48px;background:var(--accent);font-weight:600';
+  b.addEventListener('click', resume);
+  box.appendChild(b);
+  text.appendChild(box);
+}

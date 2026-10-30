@@ -91,10 +91,10 @@ let menuOpen = false;
 const ball = document.getElementById('ball');
 
 function render() {
-  ball.innerHTML = st.loading ? ICONS.dots : !st.hasChapter ? ICONS.book : st.playing ? ICONS.pause : ICONS.play;
+  ball.innerHTML = st.loading ? ICONS.dots : (!st.hasChapter && !st.hasResume) ? ICONS.book : st.playing ? ICONS.pause : ICONS.play;
   document.getElementById('rate').textContent = (st.rate || 1).toFixed(1) + '×';
   document.getElementById('chapter').textContent = st.title || 'Chapter Reader';
-  document.getElementById('sub').textContent = st.status || (st.hasChapter ? (st.progress || '') : 'Open a chapter in your browser, then Read this page');
+  document.getElementById('sub').textContent = st.status || (st.hasChapter ? (st.progress || '') : st.hasResume ? 'Click to continue: ' + (st.resumeTitle || 'your last chapter') : 'Open a chapter in your browser, then Read this page');
 }
 
 const cmd = (type, extra) => ipcRenderer.send('cmd', Object.assign({ type }, extra || {}));
@@ -125,7 +125,7 @@ document.addEventListener('mouseup', () => {
   if (dragging) { ipcRenderer.send('drag-end'); return; }
   if (held) return;
   if (menuOpen) { cmd('menu', { open: false }); return; }
-  cmd(st.hasChapter ? 'toggle' : 'readBrowser');
+  cmd(st.hasChapter || st.hasResume ? 'toggle' : 'readBrowser');
 });
 ball.addEventListener('contextmenu', (e) => { e.preventDefault(); cmd('menu'); });
 

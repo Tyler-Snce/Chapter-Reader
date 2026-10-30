@@ -238,7 +238,7 @@ class Bubble(private val svc: ReaderService) {
                             prefs.edit().putInt("bx", params.x).putInt("by", params.y).apply()
                         }
                     } else if (!longPressed) {
-                        if (svc.chapter == null) svc.readFromBrowser() else svc.toggle()
+                        if (svc.chapter == null && !svc.hasResume) svc.readFromBrowser() else svc.toggle()
                         if (!prefs.getBoolean("bubbleTipShown", false)) {
                             prefs.edit().putBoolean("bubbleTipShown", true).apply()
                             Toast.makeText(svc, "Tip: long-press the bubble for more controls", Toast.LENGTH_LONG).show()
@@ -272,7 +272,7 @@ class Bubble(private val svc: ReaderService) {
         ball.setImageResource(
             when {
                 svc.loading -> R.drawable.ic_dots
-                svc.chapter == null -> R.drawable.ic_book
+                svc.chapter == null && !svc.hasResume -> R.drawable.ic_book
                 svc.playing -> R.drawable.ic_pause
                 else -> R.drawable.ic_play
             }

@@ -57,6 +57,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.chapterreader.STOP"
         const val ACTION_LOAD_URL = "com.chapterreader.LOAD_URL"
         const val ACTION_IDLE = "com.chapterreader.IDLE"
+        const val ACTION_RESUME = "com.chapterreader.RESUME"
         const val ACTION_SHOW_BUBBLE = "com.chapterreader.SHOW_BUBBLE"
         const val EXTRA_URL = "url"
         const val EXTRA_PLAY = "play"
@@ -251,6 +252,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_LOAD_URL -> loadChapter(intent.getStringExtra(EXTRA_URL), true)
             ACTION_IDLE -> notifyState()
+            ACTION_RESUME -> resume()
             ACTION_SHOW_BUBBLE -> showBubble()
             ACTION_TOGGLE -> toggle()
             ACTION_NEXT_CH -> nextChapter()
@@ -311,7 +313,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         notifyState()
     }
 
-    fun loadChapter(url: String?, autoplay: Boolean) {
+    fun loadChapter(url: String?, autoplay: Boolean, startPara: Int = 0) {
         if (url == null || loading) return
         val wasPlaying = playing || autoplay
         if (playing) {
@@ -362,7 +364,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                     }
                     return@post
                 }
-                setChapter(ch, 0)
+                setChapter(ch, startPara)
                 if (wasPlaying) play() else notifyState()
             }
         }
@@ -373,7 +375,37 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     // ---------- speech ----------
 
+    // ---------- resume where you left off ----------
+
+    private fun saveProgress() {
+        val c = chapter ?: return
+        val p = (items.getOrNull(idx)?.p ?: 0).coerceAtLeast(0)
+        prefs.edit()
+            .putString("resumeUrl", c.url)
+            .putInt("resumePara", p)
+            .putString("resumeTitle", chapterName)
+            .apply()
+    }
+
+    private fun paraChanged(p: Int) {
+        each { it.onParagraph(p) }
+        saveProgress()
+    }
+
+    /** True when nothing is loaded but there's a saved place to continue from. */
+    val hasResume: Boolean
+        get() = chapter == null && prefs.getString("resumeUrl", null) != null
+
+    val resumeTitle: String
+        get() = prefs.getString("resumeTitle", null) ?: "your last chapter"
+
+    fun resume() {
+        val url = prefs.getString("resumeUrl", null) ?: return
+        loadChapter(url, true, prefs.getInt("resumePara", 0))
+    }
+
     fun play() {
+        if (chapter == null && !loading) { resume(); return }
         if (chapter == null || items.isEmpty() || loading) return
         if (checkEngineChanged() || !ttsReady) { playWhenReady = true; return }
         if (idx >= items.size) idx = 0
@@ -418,7 +450,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         queuedUpTo = idx - 1
         queueMore(flush = true)
         val p = items[idx].p
-        if (p >= 0) each { it.onParagraph(p) }
+        if (p >= 0) paraChanged(p)
     }
 
     private fun queueMore(flush: Boolean) {
@@ -439,7 +471,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val oldP = items.getOrNull(idx)?.p
         idx = i
         val p = items.getOrNull(i)?.p ?: return
-        if (p >= 0 && p != oldP) each { it.onParagraph(p) }
+        if (p >= 0 && p != oldP) paraChanged(p)
     }
 
     // ---------- recorded playback (for engines like SherpaTTS) ----------
@@ -554,7 +586,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private fun playRecorded() {
         stopPlayers()
         val p = items[idx].p
-        if (p >= 0) each { it.onParagraph(p) }
+        if (p >= 0) paraChanged(p)
         recordAhead()
         if (files.containsKey(idx)) startPlayer(idx) else if (failed.contains(idx)) skipFrom(idx) else setWaiting(idx)
     }
@@ -580,7 +612,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         mp.start()
         errors = 0
         val p = items[i].p
-        if (p >= 0 && p != oldP) each { it.onParagraph(p) }
+        if (p >= 0 && p != oldP) paraChanged(p)
         handler.removeCallbacks(positionTicker)
         handler.post(positionTicker)
         if (files.containsKey(i + 1)) prepareNext(i + 1)
@@ -787,7 +819,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val i = items.indexOfFirst { it.p >= target }
         if (i < 0) return
         idx = i
-        if (playing) speakCurrent() else { val p = items[idx].p; each { it.onParagraph(p) } }
+        if (playing) speakCurrent() else { val p = items[idx].p; paraChanged(p) }
     }
 
     fun startAtPara(pi: Int) {
@@ -961,6 +993,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         )
         val text = when {
             status.isNotEmpty() -> status
+            chapter == null && hasResume -> "Tap \u25B6 to continue: $resumeTitle"
             chapter == null -> "Tap the bubble to read the page you're on"
             else -> String.format(Locale.UK, "%s · %.1f×", siteName(), rate)
         }

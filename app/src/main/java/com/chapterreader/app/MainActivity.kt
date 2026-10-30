@@ -240,6 +240,10 @@ class MainActivity : Activity(), ReaderService.Listener {
 
     private fun playPressed() {
         val s = svc()
+        if (s?.chapter == null && prefs.getString("resumeUrl", null) != null) {
+            startForegroundService(Intent(this, ReaderService::class.java).setAction(ReaderService.ACTION_RESUME))
+            return
+        }
         if (s?.chapter != null && sameUrl(web.url, s.chapter?.url)) s.toggle() else readThisPage()
     }
 
@@ -384,6 +388,8 @@ class MainActivity : Activity(), ReaderService.Listener {
         statusText.text = when {
             !bubbleReady() -> "Tick Bubble to read pages from your own browser"
             s != null && s.status.isNotEmpty() -> s.status
+            (s == null || s.chapter == null) && prefs.getString("resumeUrl", null) != null ->
+                "Tap \u25B6 to continue: " + (prefs.getString("resumeTitle", null) ?: "your last chapter")
             s == null || s.chapter == null -> "Bubble ready: open a chapter in your browser and tap it"
             else -> s.chapterName
         }
