@@ -12,7 +12,7 @@ import java.security.MessageDigest
  */
 object Sync {
     /** Your Firebase Realtime Database address. */
-    const val DB = "SYNC_DATABASE_URL"
+    const val DB = "https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app"
 
     val configured: Boolean get() = DB.startsWith("https://")
 

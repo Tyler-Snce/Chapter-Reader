@@ -5,7 +5,7 @@ const { parseChapter, chunks } = require('./extract.js');
 const nodeCrypto = require('crypto');
 
 // Online sync: continue on your phone where you stopped on the PC, and the other way round
-const SYNC_DB = 'SYNC_DATABASE_URL';
+const SYNC_DB = 'https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app';
 const syncOn = () => SYNC_DB.startsWith('https://');
 
 function syncKey() {
