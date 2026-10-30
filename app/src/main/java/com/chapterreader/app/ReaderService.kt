@@ -53,6 +53,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP = "com.chapterreader.STOP"
         const val ACTION_LOAD_URL = "com.chapterreader.LOAD_URL"
         const val ACTION_IDLE = "com.chapterreader.IDLE"
+        const val ACTION_SHOW_BUBBLE = "com.chapterreader.SHOW_BUBBLE"
         const val EXTRA_URL = "url"
         const val EXTRA_PLAY = "play"
 
@@ -62,7 +63,9 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         var instance: ReaderService? = null
             private set
         var listener: Listener? = null
+        var viewListener: Listener? = null
         var appVisible = false
+        var viewVisible = false
 
         /** Chapter handed over by the app before starting the service. */
         var pending: Pair<Chapter, Int>? = null
@@ -83,6 +86,12 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private val items = ArrayList<Item>()
     private var wakeLock: PowerManager.WakeLock? = null
     private var bubble: Bubble? = null
+    private var bubbleHidden = false
+
+    private fun each(f: (Listener) -> Unit) {
+        listener?.let(f)
+        viewListener?.let(f)
+    }
 
     var chapter: Chapter? = null
         private set
@@ -107,6 +116,10 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     val currentPara: Int
         get() = items.getOrNull(idx)?.p ?: -1
+
+    /** How far through the chapter, from 0 to 1. */
+    val progress: Float
+        get() = if (items.isEmpty()) 0f else idx.coerceAtMost(items.size).toFloat() / items.size
 
     // ---------- lifecycle ----------
 
@@ -200,6 +213,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_LOAD_URL -> loadChapter(intent.getStringExtra(EXTRA_URL), true)
             ACTION_IDLE -> notifyState()
+            ACTION_SHOW_BUBBLE -> showBubble()
             ACTION_TOGGLE -> toggle()
             ACTION_NEXT_CH -> nextChapter()
             ACTION_PREV_CH -> prevChapter()
@@ -219,7 +233,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         session.release()
         io.shutdownNow()
         instance = null
-        listener?.onStateChanged()
+        each { it.onStateChanged() }
         super.onDestroy()
     }
 
@@ -243,7 +257,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         chapter = ch
         status = ""
         prefs.edit().putString("lastUrl", ch.url).apply()
-        listener?.onChapterChanged(ch.url)
+        each { it.onChapterChanged(ch.url) }
         notifyState()
     }
 
@@ -335,7 +349,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val my = ++token
         if (idx >= items.size) { chapterFinished(); return }
         val item = items[idx]
-        if (item.p >= 0) listener?.onParagraph(item.p)
+        if (item.p >= 0) each { it.onParagraph(item.p) }
         tts.setSpeechRate(rate)
         tts.speak(item.text, TextToSpeech.QUEUE_FLUSH, Bundle(), my.toString())
     }
@@ -373,7 +387,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val i = items.indexOfFirst { it.p >= target }
         if (i < 0) return
         idx = i
-        if (playing) speakCurrent() else listener?.onParagraph(items[idx].p)
+        if (playing) speakCurrent() else { val p = items[idx].p; each { it.onParagraph(p) } }
     }
 
     fun startAtPara(pi: Int) {
@@ -415,8 +429,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     // ---------- bubble ----------
 
     fun updateBubble() {
-        val want = prefs.getBoolean("bubble", true) && !appVisible &&
-            Settings.canDrawOverlays(this)
+        val want = prefs.getBoolean("bubble", true) && !appVisible && !viewVisible &&
+            !bubbleHidden && Settings.canDrawOverlays(this)
         if (want && bubble == null) {
             bubble = Bubble(this).also { it.show() }
         } else if (!want && bubble != null) {
@@ -427,8 +441,30 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun hideBubbleForNow() {
-        prefs.edit().putBoolean("bubble", false).apply()
-        updateBubble()
+        bubbleHidden = true
+        Toast.makeText(
+            this, "Bubble hidden. Bring it back from the notification or your accessibility button.",
+            Toast.LENGTH_LONG
+        ).show()
+        notifyState()
+    }
+
+    fun showBubble() {
+        bubbleHidden = false
+        prefs.edit().putBoolean("bubble", true).apply()
+        notifyState()
+    }
+
+    val isBubbleHidden: Boolean
+        get() = bubbleHidden
+
+    fun openReadingView() {
+        try {
+            startActivity(
+                Intent(this, ReadingViewActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            )
+        } catch (_: Exception) {}
     }
 
     /** Reads whatever page your browser is showing. */
@@ -496,7 +532,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         )
         getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification())
         updateBubble()
-        listener?.onStateChanged()
+        each { it.onStateChanged() }
     }
 
     private fun siteName(): String {
@@ -514,9 +550,10 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun buildNotification(): Notification {
+        val target = if (chapter != null) ReadingViewActivity::class.java else MainActivity::class.java
         val open = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            Intent(this, target).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
         val text = when {
@@ -524,7 +561,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             chapter == null -> "Tap the bubble to read the page you're on"
             else -> String.format(Locale.UK, "%s · %.1f×", siteName(), rate)
         }
-        return Notification.Builder(this, CHANNEL)
+        val b = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_book)
             .setContentTitle(chapterName)
             .setContentText(text)
@@ -541,6 +578,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             )
             .addAction(action(android.R.drawable.ic_media_next, "Next chapter", ACTION_NEXT_CH, 3))
             .addAction(action(android.R.drawable.ic_menu_close_clear_cancel, "Close", ACTION_STOP, 4))
+        if (bubbleHidden) b.addAction(action(android.R.drawable.ic_menu_view, "Show bubble", ACTION_SHOW_BUBBLE, 5))
+        return b
             .setStyle(
                 Notification.MediaStyle()
                     .setMediaSession(session.sessionToken)

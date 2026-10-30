@@ -1,5 +1,6 @@
 package com.chapterreader.app
 
+import android.accessibilityservice.AccessibilityButtonController
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
@@ -42,6 +43,27 @@ class BrowserWatcher : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // The accessibility button / shortcut brings the bubble back
+        try {
+            accessibilityButtonController.registerAccessibilityButtonCallback(
+                object : AccessibilityButtonController.AccessibilityButtonCallback() {
+                    override fun onClicked(controller: AccessibilityButtonController) {
+                        val svc = ReaderService.instance
+                        if (svc != null) {
+                            svc.showBubble()
+                        } else if (Settings.canDrawOverlays(this@BrowserWatcher)) {
+                            ReaderService.prefs(this@BrowserWatcher).edit().putBoolean("bubble", true).apply()
+                            try {
+                                startForegroundService(
+                                    Intent(this@BrowserWatcher, ReaderService::class.java)
+                                        .setAction(ReaderService.ACTION_SHOW_BUBBLE)
+                                )
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            )
+        } catch (_: Exception) {}
         val prefs = ReaderService.prefs(this)
         if (prefs.getBoolean("bubble", true) && Settings.canDrawOverlays(this)) {
             try {

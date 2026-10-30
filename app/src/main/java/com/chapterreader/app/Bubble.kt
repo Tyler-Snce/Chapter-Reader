@@ -83,11 +83,9 @@ class Bubble(private val svc: ReaderService) {
         rateLabel.gravity = Gravity.CENTER
         row2.addView(rateLabel, LinearLayout.LayoutParams(px(48), px(44)))
         row2.addView(button("+") { svc.setRate(svc.rate + 0.1f) })
-        row2.addView(button("↗") { panel.visibility = View.GONE; svc.openApp() })
-        row2.addView(button("✕") {
-            Toast.makeText(svc, "Bubble off. Turn it back on in the app.", Toast.LENGTH_SHORT).show()
-            svc.hideBubbleForNow()
-        })
+        row2.addView(button("📄") { panel.visibility = View.GONE; svc.openReadingView() })
+        row2.addView(button("⚙") { panel.visibility = View.GONE; svc.openApp() })
+        row2.addView(button("✕") { panel.visibility = View.GONE; svc.hideBubbleForNow() })
         panel.addView(row1)
         panel.addView(row2)
         root.addView(panel, LinearLayout.LayoutParams(
@@ -95,6 +93,59 @@ class Bubble(private val svc: ReaderService) {
         ).apply { topMargin = px(6) })
 
         setupTouch()
+    }
+
+    // "Drag here to hide" target shown at the bottom middle while dragging
+    private val target = TextView(svc).apply {
+        text = "✕"
+        textSize = 22f
+        setTextColor(0xFFFFFFFF.toInt())
+        gravity = Gravity.CENTER
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(0xCC2A2730.toInt())
+            setStroke((2 * dp).toInt(), 0x88FFFFFF.toInt())
+        }
+    }
+    private val targetParams = WindowManager.LayoutParams(
+        (64 * dp).toInt(), (64 * dp).toInt(),
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+        PixelFormat.TRANSLUCENT
+    ).apply {
+        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        y = (56 * dp).toInt()
+    }
+    private var targetShown = false
+
+    private fun showTarget() {
+        if (targetShown) return
+        try { wm.addView(target, targetParams); targetShown = true } catch (_: Exception) {}
+    }
+
+    private fun hideTarget() {
+        if (!targetShown) return
+        try { wm.removeView(target) } catch (_: Exception) {}
+        targetShown = false
+    }
+
+    private fun screenSize(): Pair<Int, Int> {
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val b = wm.currentWindowMetrics.bounds
+            return Pair(b.width(), b.height())
+        }
+        val m = svc.resources.displayMetrics
+        return Pair(m.widthPixels, m.heightPixels)
+    }
+
+    /** True when the finger is over the hide target. */
+    private fun overTarget(rawX: Float, rawY: Float): Boolean {
+        val (w, h) = screenSize()
+        val cx = w / 2f
+        val cy = h - targetParams.y - 32 * dp
+        val dx = rawX - cx
+        val dy = rawY - cy
+        return dx * dx + dy * dy < (90 * dp) * (90 * dp)
     }
 
     private fun row(): LinearLayout = LinearLayout(svc).apply { orientation = LinearLayout.HORIZONTAL }
@@ -143,17 +194,30 @@ class Bubble(private val svc: ReaderService) {
                     if (!dragging && (abs(dx) > slop || abs(dy) > slop)) {
                         dragging = true
                         handler.removeCallbacks(longPress)
+                        panel.visibility = View.GONE
+                        showTarget()
                     }
                     if (dragging) {
                         params.x = startX + dx.toInt()
                         params.y = startY + dy.toInt()
                         if (shown) wm.updateViewLayout(root, params)
+                        val over = overTarget(e.rawX, e.rawY)
+                        target.scaleX = if (over) 1.3f else 1f
+                        target.scaleY = target.scaleX
                     }
                 }
                 MotionEvent.ACTION_UP -> {
                     handler.removeCallbacks(longPress)
                     if (dragging) {
-                        prefs.edit().putInt("bx", params.x).putInt("by", params.y).apply()
+                        hideTarget()
+                        if (overTarget(e.rawX, e.rawY)) {
+                            // Put it back where it was so it reappears there later
+                            params.x = startX; params.y = startY
+                            if (shown) wm.updateViewLayout(root, params)
+                            svc.hideBubbleForNow()
+                        } else {
+                            prefs.edit().putInt("bx", params.x).putInt("by", params.y).apply()
+                        }
                     } else if (!longPressed) {
                         if (svc.chapter == null) svc.readFromBrowser() else svc.toggle()
                         if (!prefs.getBoolean("bubbleTipShown", false)) {
@@ -162,7 +226,7 @@ class Bubble(private val svc: ReaderService) {
                         }
                     }
                 }
-                MotionEvent.ACTION_CANCEL -> handler.removeCallbacks(longPress)
+                MotionEvent.ACTION_CANCEL -> { handler.removeCallbacks(longPress); hideTarget() }
             }
             true
         }
@@ -179,6 +243,7 @@ class Bubble(private val svc: ReaderService) {
 
     fun hide() {
         handler.removeCallbacksAndMessages(null)
+        hideTarget()
         if (!shown) return
         try { wm.removeView(root) } catch (_: Exception) {}
         shown = false
