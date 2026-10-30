@@ -102,6 +102,7 @@ class MainActivity : Activity(), ReaderService.Listener {
         // Main controls
         val row1 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(px(6), px(4), px(6), px(2))
         }
         row1.addView(button("⏮\nChapter") { svc()?.prevChapter() ?: needRead() }, weighted())
@@ -118,14 +119,14 @@ class MainActivity : Activity(), ReaderService.Listener {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(px(6), px(2), px(6), px(8))
         }
-        row2.addView(button("−") { changeRate(-0.1f) }, LinearLayout.LayoutParams(px(48), px(42)))
+        row2.addView(button("−") { changeRate(-0.1f) }, LinearLayout.LayoutParams(px(48), LinearLayout.LayoutParams.WRAP_CONTENT))
         rateText = TextView(this).apply {
             textSize = 15f
             setTextColor(FG)
             gravity = Gravity.CENTER
         }
-        row2.addView(rateText, LinearLayout.LayoutParams(px(54), px(42)))
-        row2.addView(button("+") { changeRate(0.1f) }, LinearLayout.LayoutParams(px(48), px(42)))
+        row2.addView(rateText, LinearLayout.LayoutParams(px(58), LinearLayout.LayoutParams.WRAP_CONTENT))
+        row2.addView(button("+") { changeRate(0.1f) }, LinearLayout.LayoutParams(px(48), LinearLayout.LayoutParams.WRAP_CONTENT))
         autoBox = checkbox("Auto next") { on ->
             prefs.edit().putBoolean("auto", on).apply()
             svc()?.setAuto(on)
@@ -434,10 +435,12 @@ class MainActivity : Activity(), ReaderService.Listener {
             background = rounded(color, 10)
             isClickable = true
             isFocusable = true
+            minHeight = px(44)
+            setPadding(px(2), px(6), px(2), px(6))
             setOnClickListener { onTap() }
         }
 
-    private fun weighted() = LinearLayout.LayoutParams(0, px(54), 1f).apply {
+    private fun weighted() = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
         setMargins(px(3), 0, px(3), 0)
     }
 
@@ -445,6 +448,7 @@ class MainActivity : Activity(), ReaderService.Listener {
         text = label
         textSize = 13f
         setTextColor(FG)
+        buttonTintList = android.content.res.ColorStateList.valueOf(FG)
         setOnClickListener { onChange(isChecked) }
     }
 
