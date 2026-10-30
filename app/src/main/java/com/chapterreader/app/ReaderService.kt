@@ -168,6 +168,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     /** Connects to the phone's chosen voice engine (SherpaTTS, Google, Samsung...). */
     private fun startEngine() {
         engineName = systemEngine()
+        engineReportsWords = false
+        charsPerSecond = 0f
         ttsReady = false
         tts = TextToSpeech(this, this)
     }
@@ -201,6 +203,11 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
             override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
                 handler.post {
+                    // This engine reports exact words, so no need to estimate
+                    if (!engineReportsWords) {
+                        engineReportsWords = true
+                        handler.removeCallbacks(wordTicker)
+                    }
                     if (!playing) return@post
                     val i = pieceIndex(utteranceId) ?: return@post
                     val item = items.getOrNull(i) ?: return@post
@@ -371,6 +378,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun pause() {
+        handler.removeCallbacks(wordTicker)
+        lastStartIdx = -1
         playing = false
         playWhenReady = false
         token++
@@ -425,9 +434,58 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         if (p >= 0 && p != oldP) each { it.onParagraph(p) }
     }
 
+    // ---------- estimated word highlight (for engines like SherpaTTS) ----------
+
+    private var engineReportsWords = false
+    private var lastStartIdx = -1
+    private var lastStartAt = 0L
+    private var charsPerSecond = 0f
+
+    private val wordTicker = object : Runnable {
+        override fun run() {
+            if (!playing || engineReportsWords) return
+            estimateWord()
+            handler.postDelayed(this, 90)
+        }
+    }
+
+    /** Learns how fast the voice is actually talking, from sentence start times. */
+    private fun learnSpeed(i: Int, now: Long) {
+        if (lastStartIdx == i - 1 && lastStartIdx >= 0 && lastStartAt > 0) {
+            val len = items.getOrNull(i - 1)?.text?.length ?: 0
+            val secs = (now - lastStartAt) / 1000f
+            if (secs > 0.4f && len > 10) {
+                val measured = len / secs
+                charsPerSecond = if (charsPerSecond == 0f) measured else charsPerSecond * 0.7f + measured * 0.3f
+            }
+        }
+        lastStartIdx = i
+        lastStartAt = now
+    }
+
+    private fun estimateWord() {
+        val item = items.getOrNull(idx) ?: return
+        if (item.p < 0 || item.offset < 0 || item.text.isEmpty()) return
+        val speed = if (charsPerSecond > 0f) charsPerSecond else 15f * rate
+        val elapsed = (android.os.SystemClock.uptimeMillis() - lastStartAt) / 1000f
+        val pos = (elapsed * speed).toInt().coerceIn(0, item.text.length - 1)
+        val t = item.text
+        var start = t.lastIndexOf(' ', pos) + 1
+        if (start > pos) start = pos
+        var end = t.indexOf(' ', pos)
+        if (end < 0) end = t.length
+        if (end <= start) return
+        each { it.onWord(item.p, item.offset + start, item.offset + end) }
+    }
+
     private fun onPieceStart(id: String?) {
         if (!playing) return
         val i = pieceIndex(id) ?: return
+        learnSpeed(i, android.os.SystemClock.uptimeMillis())
+        if (!engineReportsWords) {
+            handler.removeCallbacks(wordTicker)
+            handler.post(wordTicker)
+        }
         errors = 0
         if (i != idx) moveTo(i)
         queueMore(flush = false)
