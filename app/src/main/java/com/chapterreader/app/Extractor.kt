@@ -74,9 +74,15 @@ object Extractor {
         return clone.wholeText().split('\n').map { clean(it) }.filter { it.isNotEmpty() }
     }
 
-    private fun heading(doc: Document): String =
-        doc.select("h1,h2,h3,h4").map { clean(it.text()) }
-            .firstOrNull { headingRe.containsMatchIn(it) && it.length < 150 } ?: ""
+    private val strongHeadingRe = Regex("\\b(chapter|ch\\.?|episode|part)\\s*\\d", RegexOption.IGNORE_CASE)
+    private val commentRe = Regex("comment", RegexOption.IGNORE_CASE)
+
+    private fun heading(doc: Document): String {
+        val hs = doc.select("h1,h2,h3,h4").map { clean(it.text()) }
+            .filter { it.length < 150 && !commentRe.containsMatchIn(it) }
+        return hs.firstOrNull { strongHeadingRe.containsMatchIn(it) }
+            ?: hs.firstOrNull { headingRe.containsMatchIn(it) } ?: ""
+    }
 
     private fun links(doc: Document, base: String): Pair<String?, String?> {
         var next: String? = null

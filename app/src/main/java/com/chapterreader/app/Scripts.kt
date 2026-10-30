@@ -38,7 +38,9 @@ function extract(doc){
 }
 function heading(doc){
   var hs=doc.querySelectorAll('h1,h2,h3,h4');
-  for(var i=0;i<hs.length;i++){var t=clean(hs[i].textContent);if(/chap|ch\.?\s*\d|episode|part\s*\d/i.test(t)&&t.length<150)return t;}
+  var list=[];for(var i=0;i<hs.length;i++){var t=clean(hs[i].textContent);if(t.length<150&&!/comment/i.test(t))list.push(t);}
+  for(var j=0;j<list.length;j++)if(/\b(chapter|ch\.?|episode|part)\s*\d/i.test(list[j]))return list[j];
+  for(var k=0;k<list.length;k++)if(/chap|ch\.?\s*\d|episode|part\s*\d/i.test(list[k]))return list[k];
   return '';
 }
 function links(doc,base){

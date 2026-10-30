@@ -34,12 +34,11 @@ function paragraphs(doc) {
 }
 
 function heading(doc) {
-  const hs = doc.querySelectorAll('h1,h2,h3,h4');
-  for (const h of hs) {
-    const t = clean(h.textContent);
-    if (/chap|ch\.?\s*\d|episode|part\s*\d/i.test(t) && t.length < 150) return t;
-  }
-  return '';
+  const hs = Array.from(doc.querySelectorAll('h1,h2,h3,h4'))
+    .map((h) => clean(h.textContent))
+    .filter((t) => t.length < 150 && !/comment/i.test(t));
+  return hs.find((t) => /\b(chapter|ch\.?|episode|part)\s*\d/i.test(t)) ||
+    hs.find((t) => /chap|ch\.?\s*\d|episode|part\s*\d/i.test(t)) || '';
 }
 
 function links(doc, base) {

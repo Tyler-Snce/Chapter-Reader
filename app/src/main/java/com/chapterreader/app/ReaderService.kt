@@ -472,6 +472,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     private fun stopPlayers() {
         handler.removeCallbacks(positionTicker)
+        handler.removeCallbacks(stallWatch)
         try { player?.release() } catch (_: Exception) {}
         try { nextPlayer?.release() } catch (_: Exception) {}
         player = null; nextPlayer = null
@@ -541,7 +542,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val p = items[idx].p
         if (p >= 0) each { it.onParagraph(p) }
         recordAhead()
-        if (files.containsKey(idx)) startPlayer(idx) else if (failed.contains(idx)) skipFrom(idx) else waiting = idx
+        if (files.containsKey(idx)) startPlayer(idx) else if (failed.contains(idx)) skipFrom(idx) else setWaiting(idx)
     }
 
     private fun skipFrom(i: Int) {
@@ -552,6 +553,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     private fun startPlayer(i: Int, ready: MediaPlayer? = null) {
         waiting = -1
+        handler.removeCallbacks(stallWatch)
+        stallRetries = 0
         val mp = ready ?: files[i]?.let { makePlayer(it) }
         if (mp == null) { skipFrom(i); return }
         try { player?.release() } catch (_: Exception) {}
@@ -590,10 +593,43 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             try { player?.release() } catch (_: Exception) {}
             player = null
             idx = i
-            waiting = i
+            setWaiting(i)
             if (files.containsKey(i)) startPlayer(i) else { record(i); noteStall() }
             recordAhead()
         }
+    }
+
+    private var stallRetries = 0
+
+    private fun setWaiting(i: Int) {
+        waiting = i
+        handler.removeCallbacks(stallWatch)
+        handler.postDelayed(stallWatch, 8000)
+    }
+
+    /**
+     * If a recording never arrives (the phone may have closed the voice app in
+     * the background), reconnect to the voice and try again; skip it if it keeps failing.
+     */
+    private val stallWatch = Runnable {
+        val i = waiting
+        if (!playing || i < 0) return@Runnable
+        stallRetries++
+        if (stallRetries > 2) {
+            stallRetries = 0
+            failed.add(i)
+            skipFrom(i)
+            return@Runnable
+        }
+        gen++
+        recording.clear()
+        try { tts.shutdown() } catch (_: Exception) {}
+        idx = i
+        waiting = -1
+        playWhenReady = true
+        engineName = systemEngine()
+        ttsReady = false
+        tts = TextToSpeech(this, this)
     }
 
     private var stalls = 0
