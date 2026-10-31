@@ -33,7 +33,7 @@ jobs:
       - name: Test chat rules, log following and video jobs
         run: |
           set -o pipefail
-          { npm test && node ffmpeg.test.js; } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          { npm test && node ffmpeg.test.js && node capture.test.js; } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
 
       - name: Start the app and check the window has no errors
         run: |

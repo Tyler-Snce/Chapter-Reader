@@ -10,6 +10,7 @@ const { ChatRules, DEFAULT_RULES, chatFromLog, serverFromLog } = require('./rule
 const { LogWatcher } = require('./logwatch.js');
 const upload = require('./upload.js');
 const ff = require('./ffmpeg.js');
+const capture = require('./capture.js');
 
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 if (process.platform === 'win32') app.setAppUserModelId('com.stafftoolkit.pc');
@@ -243,13 +244,41 @@ async function captured(file, kind, flagId) {
   else notify(kind === 'screenshot' ? 'Screenshot saved' : 'Video saved', path.basename(file), () => shell.showItemInFolder(file));
 }
 
+/**
+ * Catbox takes files up to 200 MB. Bigger videos get a smaller copy if it can still look good;
+ * otherwise they go to Litterbox (up to 1 GB, the link lasts 3 days).
+ */
+async function catboxFor(item) {
+  delete item.expires;
+  if (item.size <= upload.CATBOX_LIMIT) return upload.toCatbox(item.file);
+  if (item.kind === 'screenshot') throw new Error('the picture is over Catbox\'s 200 MB limit');
+  const secs = Math.max(1, await ff.duration(item.file));
+  const kbps = (upload.CATBOX_LIMIT * 0.9 * 8) / 1000 / secs;
+  if (kbps >= 3000) {
+    const small = item.file.replace(/(\.\w+)$/, ' (smaller copy)$1');
+    send('busy', 'Too big for Catbox (200 MB) \u2013 making a smaller copy\u2026');
+    try {
+      await ff.shrink(item.file, small, upload.CATBOX_LIMIT * 0.95, (t) => send('busy', 'Making a smaller copy for Catbox\u2026 ' + Math.min(99, Math.round((t / secs) * 100)) + '%'));
+    } finally { send('busy', ''); }
+    item.uploadedCopy = small;
+    return upload.toCatbox(small);
+  }
+  if (item.size <= upload.LITTERBOX_LIMIT) {
+    send('toast', 'Too long for a good-looking Catbox copy \u2013 uploading to Litterbox instead (the link lasts 3 days)');
+    item.expires = Date.now() + 72 * 3600 * 1000;
+    return upload.toLitterbox(item.file);
+  }
+  throw new Error('the video is over 1 GB \u2013 trim it in the editor, or share the file itself (Copy file / Save as)');
+}
+
 async function doUpload(item) {
+  delete item.error;
   const to = settings.uploadTo === 'none' ? 'catbox' : settings.uploadTo;
   const label = item.kind === 'screenshot' ? 'Screenshot' : item.kind === 'clip' ? 'Clip' : 'Recording';
   item.uploading = true; send('capture-update', item);
   try {
     let link = null;
-    if (to === 'catbox' || to === 'both') link = await upload.toCatbox(item.file);
+    if (to === 'catbox' || to === 'both') link = await catboxFor(item);
     if (to === 'discord' || to === 'both') {
       let file = item.file;
       // Too big for Discord? Post the Catbox link, or make a smaller copy if only Discord is used
@@ -321,6 +350,117 @@ ipcMain.handle('out-file', (_e, kind) => path.join(folder(), (kind === 'clip' ? 
 ipcMain.on('rec-state', (_e, s) => { recState = s; updateTray(); });
 ipcMain.on('screenshot', () => screenshot());
 ipcMain.on('notify', (_e, { title, body }) => notify(title, body));
+
+// ---------- the main recorder (ffmpeg) ----------
+
+const caps = { record: null, recordRaw: null, replay: null, replayDir: null };
+const capLog = [];
+const logCap = (m) => { capLog.push(new Date().toISOString() + ' ' + m); if (capLog.length > 50) capLog.shift(); };
+
+async function captureOptions(audio) {
+  const id = settings.source || '';
+  if (id && !id.startsWith('screen')) throw new Error('a single window is being recorded');
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
+  const src = sources.find((s) => s.id === id) || sources[0];
+  const monitor = src ? parseInt(src.id.split(':')[1], 10) || 0 : 0;
+  const disp = (src && screen.getAllDisplays().find((d) => String(d.id) === String(src.display_id))) || screen.getPrimaryDisplay();
+  const sf = disp.scaleFactor || 1;
+  const rect = { x: Math.round(disp.bounds.x * sf), y: Math.round(disp.bounds.y * sf), width: Math.round(disp.bounds.width * sf) & ~1, height: Math.round(disp.bounds.height * sf) & ~1 };
+  const height = { native: null, 1440: 1440, 1080: 1080, 720: 720 }[settings.resolution] || null;
+  return {
+    monitor, rect, fps: Number(settings.fps) || 60,
+    height: height && height < rect.height ? height : null,
+    mouse: !!settings.showCursor, quality: settings.quality, audio: !!audio,
+  };
+}
+
+ipcMain.handle('ff-start', async (_e, { kind, audio }) => {
+  const base = await captureOptions(audio);
+  const tmp = path.join(app.getPath('temp'), 'staff-toolkit');
+  fs.mkdirSync(tmp, { recursive: true });
+  if (kind === 'record') {
+    if (caps.record) return true;
+    const raw = path.join(tmp, 'rec-' + Date.now() + '.mkv');
+    const c = await capture.startBest({ ...base, out: raw }, logCap);
+    caps.record = c; caps.recordRaw = raw;
+    c.onClose = () => {
+      // Stopped by itself: save what was recorded
+      if (caps.record === c) { caps.record = null; send('ff-ended', 'record'); finishRaw(raw); }
+    };
+  } else {
+    if (caps.replay) return true;
+    const dir = path.join(tmp, 'replay-' + Date.now());
+    fs.mkdirSync(dir, { recursive: true });
+    const c = await capture.startBest({ ...base, segmentDir: dir, segments: Math.ceil(300 / 5) + 4 }, logCap);
+    caps.replay = c; caps.replayDir = dir;
+    c.onClose = () => { if (caps.replay === c) { caps.replay = null; send('ff-ended', 'replay'); } };
+  }
+  return true;
+});
+
+async function finishRaw(raw) {
+  const out = path.join(folder(), 'Recording ' + stamp() + '.mp4');
+  send('busy', 'Saving recording\u2026');
+  try {
+    await ff.finish(raw, out, (t) => send('busy', 'Saving recording\u2026 ' + fmtSecs(t)));
+    fs.rm(raw, { force: true }, () => {});
+  } catch (e) {
+    const keep = out.replace(/\.mp4$/, '.mkv');
+    try { fs.renameSync(raw, keep); } catch (_) { try { fs.copyFileSync(raw, keep); } catch (_) {} }
+    send('busy', '');
+    captured(keep, 'recording');
+    return keep;
+  }
+  send('busy', '');
+  captured(out, 'recording');
+  return out;
+}
+const fmtSecs = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+
+ipcMain.handle('ff-stop', async (_e, { kind }) => {
+  if (kind === 'record') {
+    const c = caps.record; const raw = caps.recordRaw;
+    caps.record = null;
+    if (!c) return null;
+    await c.stop();
+    return finishRaw(raw);
+  }
+  const c = caps.replay; const dir = caps.replayDir;
+  caps.replay = null;
+  if (c) await c.stop();
+  if (dir) fs.rm(dir, { recursive: true, force: true }, () => {});
+  return null;
+});
+
+// Save the last seconds from the replay buffer's pieces
+ipcMain.handle('ff-clip', async (_e, { seconds, flagId }) => {
+  const dir = caps.replayDir;
+  if (!caps.replay || !dir) throw new Error('the replay buffer isn\'t running');
+  const pieces = fs.readdirSync(dir).filter((f) => f.endsWith('.ts'))
+    .map((f) => ({ f: path.join(dir, f), t: fs.statSync(path.join(dir, f)).mtimeMs, size: fs.statSync(path.join(dir, f)).size }))
+    .filter((p) => p.size > 0).sort((a, b) => a.t - b.t);
+  const need = pieces.slice(-(Math.ceil(seconds / 5) + 2));
+  if (!need.length) throw new Error('nothing recorded yet \u2013 try again in a few seconds');
+  // Copy them first, as the recorder keeps writing
+  const work = path.join(app.getPath('temp'), 'staff-toolkit', 'clip-' + Date.now());
+  fs.mkdirSync(work, { recursive: true });
+  const copies = need.map((p, i) => { const to = path.join(work, i + '.ts'); fs.copyFileSync(p.f, to); return to; });
+  const out = path.join(folder(), 'Clip ' + stamp() + '.mp4');
+  try {
+    await ff.joinLast(copies, seconds, out);
+  } finally {
+    fs.rm(work, { recursive: true, force: true }, () => {});
+  }
+  captured(out, 'clip', flagId);
+  return out;
+});
+
+// Sound from the window, passed on to whatever is recording
+ipcMain.on('pcm', (_e, buf) => {
+  if (caps.record) caps.record.write(buf);
+  if (caps.replay) caps.replay.write(buf);
+});
+ipcMain.handle('capture-log', () => capLog.join('\n'));
 
 // A recording finished: turn it into a normal .mp4
 ipcMain.handle('finish-recording', async (_e, { raw, out }) => {
@@ -431,7 +571,10 @@ ipcMain.handle('test-discord', async () => {
 
 app.on('second-instance', () => showWindow());
 app.on('before-quit', () => { quitting = true; });
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  try { caps.record && caps.record.kill(); caps.replay && caps.replay.kill(); } catch (_) {}
+});
 app.on('window-all-closed', (e) => e.preventDefault());
 
 app.whenReady().then(() => {

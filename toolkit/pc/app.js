@@ -183,7 +183,7 @@ function pushState() {
   renderFlags();
 }
 
-async function startRecording() {
+async function browserStartRecording() {
   if (rec.recording) return;
   try {
     const stream = await buildStream();
@@ -214,8 +214,8 @@ async function startRecording() {
     toast('Couldn\'t start recording: ' + e.message);
   }
 }
-function stopRecording() { if (rec.recording && rec.recorder && rec.recorder.state !== 'inactive') rec.recorder.stop(); }
-function toggleRecording() { rec.recording ? stopRecording() : startRecording(); }
+function browserStopRecording() { if (rec.recording && rec.recorder && rec.recorder.state !== 'inactive') rec.recorder.stop(); }
+
 setInterval(() => { if (rec.recording) $('recTime').textContent = fmtDur((Date.now() - rec.since) / 1000); }, 500);
 
 // Replay buffer: keeps recording in 10 second pieces and throws away old ones
@@ -230,7 +230,7 @@ function startPiece() {
   const keep = Math.ceil(((S.replaySeconds || 30) * 1000) / SEG_MS) + 2;
   while (rec.segs.length > keep) { const old = rec.segs.shift(); if (old.rec.state !== 'inactive') old.rec.stop(); }
 }
-async function startReplay() {
+async function browserStartReplay() {
   if (rec.replay) return;
   try {
     await buildStream();
@@ -252,7 +252,7 @@ async function startReplay() {
     pushState();
   }
 }
-function stopReplay() {
+function browserStopReplay() {
   clearInterval(rec.replayTimer);
   for (const s of rec.segs) if (s.rec.state !== 'inactive') s.rec.stop();
   rec.segs = [];
@@ -260,7 +260,7 @@ function stopReplay() {
   dropStream();
   pushState();
 }
-async function saveClip(flagId) {
+async function browserSaveClip(flagId) {
   if (!rec.replay || !rec.segs.length) { toast('Turn on the replay buffer first (Capture tab)'); return; }
   const secs = S.replaySeconds || 30;
   const cur = rec.segs[rec.segs.length - 1];
@@ -279,6 +279,127 @@ async function saveClip(flagId) {
   toast('Saving the last ' + secs + ' seconds…');
   await ipcRenderer.invoke('finish-clip', { pieces, seconds: secs, out, flagId: typeof flagId === 'string' ? flagId : null });
 }
+// ---------- the main recorder (ffmpeg: no mouse cursor, works with fullscreen games) ----------
+// Used for screen recordings and the replay buffer; recording a single window, or if it can't
+// start on this PC, uses the browser-based recorder above instead.
+const isScreen = () => !S.source || S.source.startsWith('screen');
+const cleanErr = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[\w-]+': (Error: )?/, '');
+const snd = { ctx: null, parts: [], users: new Set() };
+
+/** Mixes the chosen sound (desktop, mic, extra devices) and streams it to the recorder. */
+async function ensureAudio(user) {
+  const a = S.audio;
+  if (a.muted || !(a.desktop.on || a.mic.on || (a.extra || []).some((x) => x.on))) return false;
+  snd.users.add(user);
+  if (snd.ctx) return true;
+  const ctx = new AudioContext({ sampleRate: 48000 });
+  await ctx.audioWorklet.addModule('pcm-worklet.js');
+  const node = new AudioWorkletNode(ctx, 'pcm-tap', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2], channelCount: 2, channelCountMode: 'explicit' });
+  node.port.onmessage = (e) => ipcRenderer.send('pcm', Buffer.from(e.data));
+  const sink = ctx.createGain();
+  sink.gain.value = 0;
+  node.connect(sink).connect(ctx.destination);
+  const add = (st, volume) => { const g = ctx.createGain(); g.gain.value = volume ?? 1; ctx.createMediaStreamSource(st).connect(g).connect(node); };
+  if (a.desktop.on) {
+    try {
+      const d = await navigator.mediaDevices.getDisplayMedia({ video: { width: { max: 320 }, height: { max: 180 }, frameRate: { max: 1 } }, audio: true });
+      snd.parts.push(d);
+      if (d.getAudioTracks().length) add(new MediaStream(d.getAudioTracks()), a.desktop.volume);
+    } catch (e) { toast('Couldn\'t get desktop sound: ' + e.message); }
+  }
+  const dev = async (id, volume, noise) => {
+    try {
+      const st = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: id && id !== 'default' ? { exact: id } : undefined, echoCancellation: false, noiseSuppression: !!noise, autoGainControl: false } });
+      snd.parts.push(st); add(st, volume);
+    } catch (e) { toast('Couldn\'t use an audio device: ' + e.message); }
+  };
+  if (a.mic.on) await dev(a.mic.id, a.mic.volume, a.mic.noise);
+  for (const x of a.extra || []) if (x.on) await dev(x.id, x.volume, false);
+  snd.ctx = ctx;
+  return true;
+}
+function releaseAudio(user) {
+  snd.users.delete(user);
+  if (snd.users.size || !snd.ctx) return;
+  for (const p of snd.parts) p.getTracks().forEach((t) => t.stop());
+  snd.parts = [];
+  snd.ctx.close().catch(() => {});
+  snd.ctx = null;
+}
+
+async function startRecording() {
+  if (rec.recording) return;
+  if (isScreen()) {
+    try {
+      const audio = await ensureAudio('rec');
+      await ipcRenderer.invoke('ff-start', { kind: 'record', audio });
+      rec.engine = 'ff'; rec.recording = true; rec.since = Date.now();
+      pushState();
+      return;
+    } catch (e) {
+      releaseAudio('rec');
+      toast('Using the standard recorder (' + cleanErr(e) + ')');
+    }
+  }
+  rec.engine = 'browser';
+  await browserStartRecording();
+}
+async function stopRecording() {
+  if (!rec.recording) return;
+  if (rec.engine === 'ff') {
+    rec.recording = false;
+    pushState();
+    try { await ipcRenderer.invoke('ff-stop', { kind: 'record' }); } catch (e) { toast('Couldn\'t save the recording: ' + cleanErr(e)); }
+    releaseAudio('rec');
+    return;
+  }
+  browserStopRecording();
+}
+function toggleRecording() { rec.recording ? stopRecording() : startRecording(); }
+
+async function startReplay() {
+  if (rec.replay) return;
+  if (isScreen()) {
+    try {
+      const audio = await ensureAudio('replay');
+      await ipcRenderer.invoke('ff-start', { kind: 'replay', audio });
+      rec.replayEngine = 'ff'; rec.replay = true;
+      pushState();
+      return;
+    } catch (e) {
+      releaseAudio('replay');
+      toast('Using the standard replay buffer (' + cleanErr(e) + ')');
+    }
+  }
+  rec.replayEngine = 'browser';
+  await browserStartReplay();
+}
+async function stopReplay() {
+  if (rec.replayEngine === 'ff') {
+    rec.replay = false;
+    pushState();
+    try { await ipcRenderer.invoke('ff-stop', { kind: 'replay' }); } catch (_) {}
+    releaseAudio('replay');
+    return;
+  }
+  browserStopReplay();
+}
+async function saveClip(flagId) {
+  if (rec.replay && rec.replayEngine === 'ff') {
+    const secs = S.replaySeconds || 30;
+    toast('Saving the last ' + secs + ' seconds\u2026');
+    try { await ipcRenderer.invoke('ff-clip', { seconds: secs, flagId: typeof flagId === 'string' ? flagId : null }); } catch (e) { toast('Couldn\'t save the clip: ' + cleanErr(e)); }
+    return;
+  }
+  await browserSaveClip(flagId);
+}
+// The recorder stopped by itself (e.g. the screen setup changed)
+ipcRenderer.on('ff-ended', (_e, kind) => {
+  if (kind === 'record' && rec.engine === 'ff' && rec.recording) { rec.recording = false; releaseAudio('rec'); toast('Recording stopped unexpectedly \u2013 what was recorded has been saved'); }
+  if (kind === 'replay' && rec.replayEngine === 'ff' && rec.replay) { rec.replay = false; releaseAudio('replay'); toast('The replay buffer stopped unexpectedly'); }
+  pushState();
+});
+
 function stopAll() { stopRecording(); if (rec.replay) { set({ replayOn: false }); stopReplay(); } }
 
 // Restart capture when its settings change (not while recording)
@@ -298,6 +419,7 @@ $('shotBtn').addEventListener('click', () => ipcRenderer.send('screenshot'));
 $('replayOn').addEventListener('change', () => { set({ replayOn: $('replayOn').checked }); $('replayOn').checked ? startReplay() : stopReplay(); });
 $('replaySeconds').addEventListener('change', () => { set({ replaySeconds: +$('replaySeconds').value }); $('clipSecs').textContent = $('replaySeconds').value; });
 for (const id of ['fps', 'resolution', 'quality']) $(id).addEventListener('change', () => { set({ [id]: $(id).value }); captureChanged(); });
+$('showCursor').addEventListener('change', () => { set({ showCursor: $('showCursor').checked }); captureChanged(); });
 
 // What to capture
 $('pickSrc').addEventListener('click', async () => {
@@ -378,7 +500,8 @@ function capRow(c) {
   ico.addEventListener('dragstart', (e) => { e.preventDefault(); ipcRenderer.send('drag-out', c.file); });
   const linkPart = c.uploading ? el('span', { class: 'note', text: ' · uploading…' })
     : c.link ? el('span', {}, ' · ', el('span', { class: 'link', text: c.link, title: 'Open', onclick: () => ipcRenderer.send('open-link', c.link) }))
-      : c.error ? el('span', { class: 'note', style: 'color:var(--warn)', text: ' · upload failed' }) : null;
+      : c.error ? el('span', { class: 'note', style: 'color:var(--warn)', title: c.error, text: ' · upload failed: ' + c.error }) : null;
+  if (c.link && c.expires && linkPart) linkPart.append(el('span', { class: 'note', text: ' (link lasts until ' + fmtDate(c.expires) + ')' }));
   const acts = el('div', { class: 'acts' });
   if (c.link) acts.append(el('button', { class: 'small primary', text: 'Copy link', onclick: () => { ipcRenderer.send('copy', c.link); toast('Link copied'); } }));
   else acts.append(el('button', { class: 'small', text: 'Upload', disabled: c.uploading ? 'disabled' : null, onclick: () => ipcRenderer.invoke('upload', c.id) }));
@@ -422,7 +545,7 @@ function renderSettings() {
   $('kShot').textContent = S.hotkeys.screenshot; $('kRec').textContent = S.hotkeys.record; $('kClip').textContent = S.hotkeys.clip;
   document.querySelectorAll('.rule').forEach((c) => { c.checked = S.rules[c.dataset.rule] !== false; });
   for (const k of ['blockedWords', 'allowDomains', 'watchPlayers', 'ignorePlayers']) $(k).value = (S.rules[k] || []).join('\n');
-  $('fps').value = String(S.fps); $('resolution').value = S.resolution; $('quality').value = S.quality;
+  $('showCursor').checked = !!S.showCursor; $('fps').value = String(S.fps); $('resolution').value = S.resolution; $('quality').value = S.quality;
   $('replaySeconds').value = String(S.replaySeconds); $('clipSecs').textContent = S.replaySeconds;
   $('srcName').textContent = S.sourceName || 'Main screen';
   renderLogPaths();

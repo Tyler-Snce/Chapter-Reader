@@ -24,6 +24,21 @@ async function toCatbox(file) {
   return text;
 }
 
+const LITTERBOX_LIMIT = 1024 * 1024 * 1024;
+
+/** Uploads to Litterbox (Catbox's temporary sister site: up to 1 GB, link lasts 3 days). */
+async function toLitterbox(file) {
+  if (fs.statSync(file).size > LITTERBOX_LIMIT) throw new Error('the file is over 1 GB');
+  const form = new FormData();
+  form.append('reqtype', 'fileupload');
+  form.append('time', '72h');
+  form.append('fileToUpload', await fileBlob(file), path.basename(file));
+  const r = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', { method: 'POST', body: form });
+  const text = (await r.text()).trim();
+  if (!r.ok || !/^https:\/\//.test(text)) throw new Error('Litterbox said: ' + text.slice(0, 120));
+  return text;
+}
+
 function validWebhook(url) {
   return /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+/.test(String(url || '').trim());
 }
@@ -51,4 +66,4 @@ async function toDiscord(webhook, { content = '', file = null, embed = null } = 
   return msg && msg.attachments && msg.attachments[0] ? msg.attachments[0].url : null;
 }
 
-module.exports = { toCatbox, toDiscord, validWebhook, CATBOX_LIMIT, DISCORD_LIMIT };
+module.exports = { toCatbox, toLitterbox, toDiscord, validWebhook, CATBOX_LIMIT, DISCORD_LIMIT, LITTERBOX_LIMIT };

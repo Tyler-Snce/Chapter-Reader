@@ -20,7 +20,7 @@
     "appId": "com.stafftoolkit.pc",
     "productName": "Staff Toolkit",
     "files": [
-      "main.js", "app.js", "index.html", "rules.js", "logwatch.js", "upload.js", "ffmpeg.js",
+      "main.js", "app.js", "index.html", "rules.js", "logwatch.js", "upload.js", "ffmpeg.js", "capture.js", "pcm-worklet.js",
       "icon.png", "tray.png", "package.json",
       "node_modules/ffmpeg-static/**"
     ],
