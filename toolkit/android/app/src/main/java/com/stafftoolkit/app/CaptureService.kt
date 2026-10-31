@@ -405,6 +405,7 @@ class CaptureService : Service() {
         menu.addView(btn("📷", "Screenshot") { menu.visibility = View.GONE; work.execute { screenshot() } })
         menu.addView(btn("⏺", "Start or stop recording") { menu.visibility = View.GONE; work.execute { toggleRecording() } })
         menu.addView(btn("⏪", "Save the last seconds") { menu.visibility = View.GONE; work.execute { saveClip(null) } })
+        menu.addView(btn("\uD83D\uDCCB", "Flagged messages") { menu.visibility = View.GONE; togglePanel() })
         menu.addView(btn("\uD83D\uDCAC", "Switch Discord channel") {
             // Cycle through the saved channels (and None)
             val hooks = Store.hooks(this)
@@ -449,14 +450,102 @@ class CaptureService : Service() {
     private fun updateBubble() {
         val b = bubbleMain ?: return
         (b.background as? GradientDrawable)?.setColor(if (recording) 0xEEFF3B4E.toInt() else 0xEE3FB68B.toInt())
-        b.text = if (recording) "⏺" else "🛡"
+        // Shows how many flagged messages are waiting
+        val waiting = Store.flags(this).count { !it.done }
+        b.text = if (recording) "⏺" else if (waiting > 0) (if (waiting > 99) "99+" else waiting.toString()) else "🛡"
+        b.textSize = if (waiting > 0 && !recording) 16f else 20f
+        if (panel != null) fillPanel()
         (bubbleMenu?.getChildAt(1) as? TextView)?.text = if (recording) "⏹" else "⏺"
         (bubbleMenu?.getChildAt(2) as? TextView)?.alpha = if (recorder != null && prefs.getBoolean("replayOn", false)) 1f else 0.4f
     }
 
     private fun hideBubble() {
+        hidePanel()
         bubble?.let { try { getSystemService(WindowManager::class.java).removeView(it) } catch (_: Exception) {} }
         bubble = null; bubbleMenu = null; bubbleMain = null
+    }
+
+    // ---------- flagged messages panel (over the game, so you never leave Minecraft) ----------
+
+    private var panel: LinearLayout? = null
+    private var panelList: LinearLayout? = null
+
+    private fun togglePanel() { if (panel != null) hidePanel() else showPanel() }
+
+    private fun hidePanel() {
+        panel?.let { try { getSystemService(WindowManager::class.java).removeView(it) } catch (_: Exception) {} }
+        panel = null; panelList = null
+    }
+
+    private fun showPanel() {
+        if (!Settings.canDrawOverlays(this)) return
+        val wm = getSystemService(WindowManager::class.java)
+        val m = resources.displayMetrics
+        val w = minOf(dp(360), (m.widthPixels * 0.9f).toInt())
+        val h = (m.heightPixels * 0.7f).toInt()
+        val lp = WindowManager.LayoutParams(w, h, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; x = dp(12) }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(0xF2191C22.toInt()) }
+            setPadding(dp(10), dp(8), dp(10), dp(10))
+        }
+        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(TextView(this).apply { text = "Flagged messages"; setTextColor(Color.WHITE); textSize = 16f; typeface = android.graphics.Typeface.DEFAULT_BOLD },
+            LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(panelButton("\u2715", 0xFF2C313B.toInt()) { hidePanel() })
+        root.addView(head)
+        val scroll = android.widget.ScrollView(this)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(list)
+        root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(6) })
+        try { wm.addView(root, lp) } catch (_: Exception) { return }
+        panel = root; panelList = list
+        fillPanel()
+    }
+
+    private fun panelButton(label: String, color: Int, onTap: () -> Unit) = TextView(this).apply {
+        text = label; textSize = 13f; gravity = Gravity.CENTER
+        setTextColor(if (color == 0xFF3FB68B.toInt()) 0xFF06140E.toInt() else Color.WHITE)
+        background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(color) }
+        setPadding(dp(10), dp(7), dp(10), dp(7))
+        minWidth = dp(44)
+        setOnClickListener { onTap() }
+    }
+
+    private fun fillPanel() {
+        val list = panelList ?: return
+        list.removeAllViews()
+        val flags = Store.flags(this).filter { !it.done }.take(30)
+        if (flags.isEmpty()) {
+            list.addView(TextView(this).apply { text = "Nothing waiting. New flags show up here and on the button."; setTextColor(0xFF8A92A2.toInt()); textSize = 13f })
+            return
+        }
+        val fmt = java.text.SimpleDateFormat("HH:mm:ss", Locale.UK)
+        for (f in flags) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = GradientDrawable().apply { cornerRadius = dp(10).toFloat(); setColor(0xFF20242C.toInt()) }
+                setPadding(dp(10), dp(8), dp(10), dp(8))
+            }
+            card.addView(TextView(this).apply { text = fmt.format(f.time) + "  \u00b7  " + f.reasons.joinToString(); setTextColor(0xFFFFC9CD.toInt()); textSize = 12f })
+            card.addView(TextView(this).apply { text = (f.player?.let { "$it: " } ?: "") + f.message; setTextColor(Color.WHITE); textSize = 14f })
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val gap = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6); topMargin = dp(6) }
+            row.addView(panelButton("Copy", 0xFF2C313B.toInt()) {
+                Uploader.copy(this, (f.player?.let { "$it: " } ?: "") + f.message + (f.evidence?.let { "\nEvidence: $it" } ?: ""))
+                toast("Copied")
+            }, gap)
+            if (recorder != null && prefs.getBoolean("replayOn", false)) {
+                row.addView(panelButton("\u23EA Clip", 0xFF2C313B.toInt()) { work.execute { saveClip(f.id) } }, gap)
+            }
+            row.addView(panelButton("Handled", 0xFF3FB68B.toInt()) {
+                Store.updateFlag(this, f.id) { it.done = true }
+                changed()
+            }, gap)
+            card.addView(row)
+            list.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6) })
+        }
     }
 
     // ---------- notifications ----------
