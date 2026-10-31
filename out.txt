@@ -1,0 +1,5 @@
+== gofile upload
+{"data":{"code":"DgjTquRo","createTime":1793458451,"downloadPage":"https://gofile.io/d/dJ3nrfdX","guestToken":"QmOTExrPE8fHNEeZew36XCfho3ibrhM0","id":"3ac00442-c76e-4c39-a6d9-5062527f0669","md5":"fb1de45cbedb9ada057c6172ec74aab8","mimetype":"text/plain; charset=utf-8","modTime":1793458451,"name":"t.txt","parentFolder":"93845d6d-cb5b-4a8d-9a53-ffc267f8e53b","parentFolderCode":"dJ3nrfdX","servers":["store-na-phx-5"],"size":26,"type":"file"},"status":"ok"}
+
+== gofile servers
+{"status":"ok","data":{"servers":[{"name":"store-na-phx-3","zone":"na"},{"name":"store8","zone":"na"},{"name":"store-na-phx-5","zone":"na"},{"name":"store-na-phx-4","zone":"na"},{"name":"store9","zone":"na"},{"name":"store3","zone":"na"}],"serversAllZone":[{"name":"store-na-phx-3","zone":"na"},{"name":"store-na-phx-5","zone":"na"},{"name":"store-na-phx-4","zone":"na"},{"name":"store8","zone":"na"},{"name":"store9","zone":"na"},{"name":"store3","zone":"na"}]}}
