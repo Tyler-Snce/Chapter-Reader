@@ -399,7 +399,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private var mangaGen = 0
     private var waitingText = false
     private var pendingStart = -1
-    val bubbles = ArrayList<Bubble>()
+    val bubbles = ArrayList<SpeechBubble>()
     private val bubbleTexts = ArrayList<String>()
     /** Local copy of each page image, or null while it's still downloading. */
     val mangaFiles = ArrayList<String?>()
@@ -443,7 +443,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun addBubbles(found: List<Bubble>) {
+    private fun addBubbles(found: List<SpeechBubble>) {
         for (b in found) {
             val pi = bubbleTexts.size
             bubbles.add(b)

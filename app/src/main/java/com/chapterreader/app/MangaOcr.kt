@@ -15,7 +15,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** A speech bubble (or caption) found in a page image. Position is a fraction of the image size. */
-data class Bubble(
+data class SpeechBubble(
     val img: Int,
     val x: Float,
     val y: Float,
@@ -71,7 +71,7 @@ class MangaOcr(private val userAgent: String) {
 
     /** Reads the text in one page image, in reading order (top to bottom, left to right). */
     @Suppress("DEPRECATION")
-    fun bubbles(file: File, imgIndex: Int): List<Bubble> {
+    fun bubbles(file: File, imgIndex: Int): List<SpeechBubble> {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
         val w = bounds.outWidth
@@ -140,7 +140,7 @@ class MangaOcr(private val userAgent: String) {
         })
         return ordered.mapNotNull { b ->
             val text = tidy(b.text) ?: return@mapNotNull null
-            Bubble(imgIndex, b.l.toFloat() / w, b.t.toFloat() / h, (b.r - b.l).toFloat() / w, (b.b - b.t).toFloat() / h, text)
+            SpeechBubble(imgIndex, b.l.toFloat() / w, b.t.toFloat() / h, (b.r - b.l).toFloat() / w, (b.b - b.t).toFloat() / h, text)
         }
     }
 
