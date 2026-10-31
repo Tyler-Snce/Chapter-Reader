@@ -1,5 +1,6 @@
 package com.chapterreader.app
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
@@ -89,17 +90,26 @@ class MangaOcr(private val userAgent: String) {
         try {
             while (top < h) {
                 val bottom = min(h, top + tileH)
-                val bmp = decoder.decodeRegion(Rect(0, top, w, bottom), BitmapFactory.Options().apply { inSampleSize = sample })
-                if (bmp != null) {
-                    val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 30, TimeUnit.SECONDS)
-                    for (block in result.textBlocks) {
-                        val r = block.boundingBox ?: continue
-                        val lines = block.lines
-                        val lineH = if (lines.isNotEmpty()) (r.height() / lines.size) * sample else r.height() * sample
-                        val text = lines.joinToString(" ") { it.text }
-                        found.add(Box(r.left * sample, r.top * sample + top, r.right * sample, r.bottom * sample + top, text, max(1, lineH)))
+                val raw = decoder.decodeRegion(Rect(0, top, w, bottom), BitmapFactory.Options().apply { inSampleSize = sample })
+                if (raw != null) {
+                    // Small pictures are enlarged first so small lettering can still be read
+                    val up = if (raw.width < 1000) min(2f, 1200f / raw.width) else 1f
+                    val bmp = if (up > 1.05f) Bitmap.createScaledBitmap(raw, (raw.width * up).toInt(), (raw.height * up).toInt(), true) else raw
+                    val k = sample / (if (bmp === raw) 1f else up)
+                    try {
+                        val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 30, TimeUnit.SECONDS)
+                        for (block in result.textBlocks) {
+                            val r = block.boundingBox ?: continue
+                            val lines = block.lines
+                            val lineH = (if (lines.isNotEmpty()) r.height() / lines.size else r.height()) * k
+                            val text = lines.joinToString(" ") { it.text }
+                            found.add(Box((r.left * k).toInt(), (r.top * k).toInt() + top, (r.right * k).toInt(), (r.bottom * k).toInt() + top, text, max(1, lineH.toInt())))
+                        }
+                    } catch (_: Exception) {
+                    } finally {
+                        if (bmp !== raw) bmp.recycle()
+                        raw.recycle()
                     }
-                    bmp.recycle()
                 }
                 if (bottom >= h) break
                 top = bottom - overlap

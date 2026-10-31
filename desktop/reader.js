@@ -368,7 +368,8 @@ async function readPage(blob, imgIndex) {
   const bmp = await createImageBitmap(blob);
   const W = bmp.width, H = bmp.height;
   // Windows text recognition handles pictures up to about 2600px on a side
-  const scale = Math.min(1, 1400 / W);
+  // Small pictures are enlarged (up to 2x) so small lettering can still be read
+  const scale = Math.min(2, 1400 / W);
   const tileH = Math.min(H, Math.floor(2400 / scale));
   const overlap = Math.min(Math.floor(tileH / 4), Math.floor(300 / scale));
   const found = [];
@@ -465,7 +466,7 @@ function tidy(raw) {
 
 // Site watermarks stamped on the pictures (e.g. "I ♥ MANGA") shouldn't be read out
 const WATERMARK_WORDS = /^(i\s*\S?\s*)?(love|luv|heart|<3|\u2665|\u2764|\u2661)?\s*(manga|manhwa|manhua|webtoons?|comics?|toon\w*|scans?)\s*(club|zone|world|online|hub|land)?$/i;
-let seenEdgeText = new Map();   // short text near a page edge -> which page it was first seen on
+let seenEdgeText = new Map();   // short text near a page edge -> where it was first seen
 
 function isWatermark(b) {
   const key = b.text.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -475,14 +476,43 @@ function isWatermark(b) {
   const nearEdge = b.y < 0.12 || b.y + b.h > 0.88 || b.x > 0.6 || b.x + b.w < 0.4;
   if (!nearEdge) return false;
   const first = seenEdgeText.get(key);
-  if (first === undefined) { seenEdgeText.set(key, b.img); return false; }
-  return first !== b.img;   // the same short text in a corner on another page: a stamp
+  if (first === undefined) { seenEdgeText.set(key, b); return false; }
+  // A stamp repeats in the same spot on another page; ordinary repeated lines ("What?") don't
+  return first.img !== b.img && Math.abs(first.x - b.x) < 0.08 && Math.abs(first.y - b.y) < 0.08;
+}
+
+function addItems(pi, t) {
+  let cursor = 0;
+  for (const c of chunks(t)) {
+    let at = t.indexOf(c, cursor);
+    if (at < 0) at = t.indexOf(c.slice(0, 20), cursor);
+    st.items.push({ p: pi, text: c, offset: at });
+    if (at >= 0) cursor = at + c.length;
+  }
+}
+
+/** Joins a bubble cut in half by the site's picture slices, if its first half hasn't been read yet. */
+function joinSplit(b) {
+  const ch = st.chapter, pi = bubbles.length - 1, prev = bubbles[pi];
+  if (!prev || prev.img !== b.img - 1 || prev.y + prev.h < 0.94 || b.y > 0.06) return false;
+  if (Math.min(prev.x + prev.w, b.x + b.w) - Math.max(prev.x, b.x) <= 0) return false;
+  const first = st.items.findIndex((it) => it.p === pi);
+  if (first < 0 || st.idx >= first || st.items.slice(first).some((it) => it.p !== pi)) return false;
+  st.items.length = first;
+  for (const k of [...clips.keys()]) if (k >= first) clips.delete(k);
+  prev.text = prev.text + ' ' + b.text;
+  ch.paras[pi] = prev.text;
+  const o = text.querySelector('.bub[data-i="' + pi + '"]');
+  if (o) o.title = prev.text;
+  addItems(pi, prev.text);
+  return true;
 }
 
 function addBubbles(found) {
   const ch = st.chapter;
   found = found.filter((b) => !isWatermark(b));
-  for (const b of found) {
+  for (const [n, b] of found.entries()) {
+    if (n === 0 && joinSplit(b)) continue;
     const pi = ch.paras.length;
     ch.paras.push(b.text);
     bubbles.push(b);
@@ -497,13 +527,7 @@ function addBubbles(found) {
       o.addEventListener('click', () => startAt(pi));
       d.appendChild(o);
     }
-    let cursor = 0;
-    for (const c of chunks(b.text)) {
-      let at = b.text.indexOf(c, cursor);
-      if (at < 0) at = b.text.indexOf(c.slice(0, 20), cursor);
-      st.items.push({ p: pi, text: c, offset: at });
-      if (at >= 0) cursor = at + c.length;
-    }
+    addItems(pi, b.text);
   }
   if (pendingStart >= 0) {
     const i = st.items.findIndex((it) => it.p >= pendingStart);

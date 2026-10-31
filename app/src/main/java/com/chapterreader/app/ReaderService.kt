@@ -30,6 +30,9 @@ import org.jsoup.Jsoup
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Reads the current chapter aloud with the phone's voice engine. Runs as a
@@ -462,7 +465,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         "^(i\\s*\\S?\\s*)?(love|luv|heart|<3|\u2665|\u2764|\u2661)?\\s*(manga|manhwa|manhua|webtoons?|comics?|toon\\w*|scans?)\\s*(club|zone|world|online|hub|land)?$",
         RegexOption.IGNORE_CASE
     )
-    private val seenEdgeText = HashMap<String, Int>()
+    private val seenEdgeText = HashMap<String, SpeechBubble>()
 
     private fun isWatermark(b: SpeechBubble): Boolean {
         val key = b.text.lowercase().replace(Regex("[^a-z0-9]"), "")
@@ -472,23 +475,49 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val nearEdge = b.y < 0.12f || b.y + b.h > 0.88f || b.x > 0.6f || b.x + b.w < 0.4f
         if (!nearEdge) return false
         val first = seenEdgeText[key]
-        if (first == null) { seenEdgeText[key] = b.img; return false }
-        return first != b.img   // the same short text in a corner on another page: a stamp
+        if (first == null) { seenEdgeText[key] = b; return false }
+        // A stamp repeats in the same spot on another page; ordinary repeated lines ("What?") don't
+        return first.img != b.img && abs(first.x - b.x) < 0.08f && abs(first.y - b.y) < 0.08f
+    }
+
+    private fun addItems(pi: Int, text: String) {
+        var cursor = 0
+        for (c in Extractor.chunks(text)) {
+            var at = text.indexOf(c, cursor)
+            if (at < 0) at = text.indexOf(c.take(20), cursor)
+            items.add(Item(pi, c, at))
+            if (at >= 0) cursor = at + c.length
+        }
+    }
+
+    /** Joins a bubble cut in half by the site's picture slices, if its first half hasn't been read yet. */
+    private fun joinSplit(b: SpeechBubble): Boolean {
+        val pi = bubbles.size - 1
+        val prev = bubbles.lastOrNull() ?: return false
+        if (prev.img != b.img - 1 || prev.y + prev.h < 0.94f || b.y > 0.06f) return false
+        if (min(prev.x + prev.w, b.x + b.w) - max(prev.x, b.x) <= 0f) return false
+        val firstItem = items.indexOfFirst { it.p == pi }
+        if (firstItem < 0 || idx >= firstItem || items.subList(firstItem, items.size).any { it.p != pi }) return false
+        // Already handed to the voice? Then leave it as two bubbles rather than cut the speech off
+        if (!recorded && playing && queuedUpTo >= firstItem) return false
+        val stale = recorded && (files.keys.any { it >= firstItem } || recording.any { it >= firstItem } || nextIdx >= firstItem)
+        while (items.size > firstItem) items.removeAt(items.size - 1)
+        val text = prev.text + " " + b.text
+        bubbles[pi] = prev.copy(text = text)
+        bubbleTexts[pi] = text
+        addItems(pi, text)
+        if (stale) rerecordAhead()
+        return true
     }
 
     private fun addBubbles(all: List<SpeechBubble>) {
         val found = all.filterNot { isWatermark(it) }
-        for (b in found) {
+        for ((n, b) in found.withIndex()) {
+            if (n == 0 && joinSplit(b)) continue
             val pi = bubbleTexts.size
             bubbles.add(b)
             bubbleTexts.add(b.text)
-            var cursor = 0
-            for (c in Extractor.chunks(b.text)) {
-                var at = b.text.indexOf(c, cursor)
-                if (at < 0) at = b.text.indexOf(c.take(20), cursor)
-                items.add(Item(pi, c, at))
-                if (at >= 0) cursor = at + c.length
-            }
+            addItems(pi, b.text)
         }
         if (pendingStart >= 0) {
             val i = items.indexOfFirst { it.p >= pendingStart }
