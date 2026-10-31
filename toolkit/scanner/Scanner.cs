@@ -493,7 +493,8 @@ namespace StaffToolkitScan
                 stack.Push(Tuple.Create(root.Item1, 0));
                 while (stack.Count > 0)
                 {
-                    if (watch.Elapsed.TotalSeconds > 60) { Add(Level.Info, "Files", "The file check stopped after 60 seconds (" + looked + " files checked)", "There are a lot of files; the most likely places were checked first."); return; }
+                    if (looked % 500 == 0) Progress("Looking for hidden or disguised programs\u2026 (" + looked + " files)");
+                    if (watch.Elapsed.TotalSeconds > 90) { Add(Level.Info, "Files", "The file check stopped after 90 seconds (" + looked + " files checked)", "There are a lot of files; the most likely places were checked first."); return; }
                     var cur = stack.Pop();
                     if (!visited.Add(cur.Item1)) continue;
                     string[] files = new string[0], dirs = new string[0];
@@ -526,6 +527,11 @@ namespace StaffToolkitScan
             var userFolder = Regex.IsMatch(lf, @"\\(desktop|downloads|documents|videos|pictures|music|onedrive[^\\]*)\\");
             var when = "Modified " + Ago(File.GetLastWriteTime(f)) + ", " + (size / 1024) + " KB";
 
+            // Places cheats are usually kept; elsewhere (game and program installs) only names are checked
+            var hotspot = userFolder || lf.StartsWith(AppData.ToLowerInvariant()) || lf.StartsWith(LocalAppData.ToLowerInvariant())
+                || lf.StartsWith(Path.GetTempPath().ToLowerInvariant()) || Path.GetDirectoryName(f).Equals(Home, StringComparison.OrdinalIgnoreCase)
+                || (Path.GetDirectoryName(Path.GetDirectoryName(f) ?? "") ?? "").Length <= 3;
+            if (isProgram && ext.StartsWith(".exe", StringComparison.OrdinalIgnoreCase)) ext = ".exe";
             if (isProgram)
             {
                 if (!ProgramExts.Contains(ext))
@@ -539,7 +545,8 @@ namespace StaffToolkitScan
                 {
                     var cheat = CheatMatch(Path.GetFileName(f));
                     if (cheat != null) Add(Level.Serious, "Files", "Cheat-related program: " + Path.GetFileName(f) + " (" + cheat + ")", Short(f) + "\n" + when);
-                    InspectProgram(f, size, false);
+                    var isExe = ext.Equals(".exe", StringComparison.OrdinalIgnoreCase);
+                    if (hotspot && (isExe || userFolder)) InspectProgram(f, size, false);
                 }
             }
             else if (isZip)
@@ -565,7 +572,7 @@ namespace StaffToolkitScan
         /** Looks inside a program for signs it's a Java cheat injector, or a protected unsigned loader. */
         void InspectProgram(string f, long size, bool disguised)
         {
-            if (size > 60L * 1024 * 1024) return;
+            if (size > (disguised ? 60L : 20L) * 1024 * 1024) return;
             var signer = Signer(f);
             if (signer != null && !disguised) return;   // signed by a company: not a cheat loader
             byte[] bytes;
