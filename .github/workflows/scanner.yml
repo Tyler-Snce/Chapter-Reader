@@ -43,6 +43,9 @@ jobs:
           # A fake injector hidden as "MC ADDON" (a program with no file type that hooks Java)
           $fake = [byte[]](@(0x4D,0x5A) + (1..2000 | ForEach-Object { 0 })) + [Text.Encoding]::ASCII.GetBytes('JNI_GetCreatedJavaVMs javaw.exe') + [byte[]](1..2000 | ForEach-Object { 0 })
           [IO.File]::WriteAllBytes((Join-Path $env:USERPROFILE 'Documents\MC ADDON'), $fake)
+          # The same kind of program as an ordinary .exe inside a folder called "MC ADDON"
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:USERPROFILE 'Desktop\MC ADDON') | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $env:USERPROFILE 'Desktop\MC ADDON\addon.exe'), $fake)
           # A scrambled Lunar-style game file with short class names like fly/esp/reach: must NOT be flagged
           $lunar = Join-Path $env:USERPROFILE '.lunarclient\offline\multiver'
           New-Item -ItemType Directory -Force -Path $lunar | Out-Null
@@ -59,6 +62,7 @@ jobs:
           if ($t -notmatch 'vape') { throw 'fake cheat download not detected' }
           if ($t -notmatch 'disguised as a file with no type: MC ADDON') { throw 'disguised MC ADDON program not detected' }
           if ($t -notmatch 'attach to a running Java game') { throw 'Java injector code not detected' }
+          if ($t -notmatch 'attach to a running Java game: addon.exe') { throw 'program inside the MC ADDON folder not detected' }
           if ($t -match 'lunar-prod') { throw 'Lunar game file wrongly flagged' }
           # The upload path Staff Toolkit reads from: send, read back, delete
           $url = 'https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app/progress/ss-CITEST.json'

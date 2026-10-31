@@ -494,7 +494,7 @@ namespace StaffToolkitScan
                 while (stack.Count > 0)
                 {
                     if (looked % 500 == 0) Progress("Looking for hidden or disguised programs\u2026 (" + looked + " files)");
-                    if (watch.Elapsed.TotalSeconds > 90) { Add(Level.Info, "Files", "The file check stopped after 90 seconds (" + looked + " files checked)", "There are a lot of files; the most likely places were checked first."); return; }
+                    if (watch.Elapsed.TotalSeconds > 90) { ListUnsigned(); Add(Level.Info, "Files", "The file check stopped after 90 seconds (" + looked + " files checked)", "There are a lot of files; the most likely places were checked first."); return; }
                     var cur = stack.Pop();
                     if (!visited.Add(cur.Item1)) continue;
                     string[] files = new string[0], dirs = new string[0];
@@ -510,7 +510,17 @@ namespace StaffToolkitScan
                     }
                 }
             }
+            ListUnsigned();
             Add(Level.Info, "Files", "Checked " + looked + " files in user folders and drives for hidden programs");
+        }
+
+        readonly List<string> unsignedPrograms = new List<string>();
+
+        void ListUnsigned()
+        {
+            if (unsignedPrograms.Count == 0) return;
+            Add(Level.Info, "Files", unsignedPrograms.Count + " programs in your own folders have no publisher (staff: ask about any you don't recognise)",
+                string.Join("\n", unsignedPrograms.Take(60)) + (unsignedPrograms.Count > 60 ? "\n\u2026and " + (unsignedPrograms.Count - 60) + " more" : ""));
         }
 
         void CheckFile(string f)
@@ -575,6 +585,9 @@ namespace StaffToolkitScan
             if (size > (disguised ? 60L : 20L) * 1024 * 1024) return;
             var signer = Signer(f);
             if (signer != null && !disguised) return;   // signed by a company: not a cheat loader
+            // Every unsigned program in the player's own folders is listed, so a renamed cheat can't blend in
+            if (signer == null && Regex.IsMatch(f.ToLowerInvariant(), @"\\(desktop|downloads|documents|videos|pictures|music|onedrive[^\\]*)\\") && f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                unsignedPrograms.Add(Short(f) + "   (" + File.GetLastWriteTime(f).ToString("dd MMM yyyy") + ", " + (size / 1024) + " KB)");
             byte[] bytes;
             try { using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) { bytes = new byte[fs.Length]; int got = 0; while (got < bytes.Length) { var n = fs.Read(bytes, got, bytes.Length - got); if (n <= 0) break; got += n; } } }
             catch { return; }
