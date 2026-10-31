@@ -60,10 +60,24 @@ function encodeArgs(enc, quality = 'high') {
   return ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', String(q)];
 }
 
+/** When the picture starts in a file (sound can start a moment earlier while capture warms up). */
+function firstVideoTime(file) {
+  return new Promise((resolve) => {
+    execFile(ffmpegPath(), ['-hide_banner', '-copyts', '-i', file, '-map', '0:v:0', '-frames:v', '1', '-vf', 'showinfo', '-f', 'null', '-'],
+      { windowsHide: true }, (_e, _o, stderr) => {
+        const m = /pts_time:\s*(-?[\d.]+)/.exec(stderr || '');
+        resolve(m ? parseFloat(m[1]) : 0);
+      });
+  });
+}
+
 /** Makes a recording into a normal .mp4 that plays everywhere (no quality loss for the video). */
 async function finish(input, output, onProgress) {
   const isWebm = /\.webm$/i.test(input);
-  await run(['-i', input, '-map', '0', '-c:v', 'copy', ...(isWebm ? ['-c:a', 'aac', '-b:a', '192k'] : ['-c:a', 'copy']),
+  // Leave out any sound recorded before the picture started
+  const lead = isWebm ? 0 : await firstVideoTime(input);
+  const seek = lead > 0.05 ? ['-ss', lead.toFixed(3)] : [];
+  await run([...seek, '-i', input, '-map', '0', '-c:v', 'copy', ...(isWebm ? ['-c:a', 'aac', '-b:a', '192k'] : ['-c:a', 'copy']),
     '-movflags', '+faststart', output], onProgress);
 }
 
@@ -156,4 +170,4 @@ async function shrink(input, output, maxBytes, onProgress) {
   }
 }
 
-module.exports = { run, duration, encoder, finish, joinLast, trim, edit, hasAudio, shrink, ffmpegPath };
+module.exports = { run, duration, encoder, finish, firstVideoTime, joinLast, trim, edit, hasAudio, shrink, ffmpegPath };

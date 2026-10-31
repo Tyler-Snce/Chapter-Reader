@@ -29,12 +29,13 @@ async function feed(c, seconds) {
   const c = await startBest({ fps: 30, quality: 'standard', audio: true, out, mouse: false }, log);
   await feed(c, 4);
   await c.stop();
-  const d = await ff.duration(out);
-  assert.ok(d > 2.5 && d < 6, 'recording length ' + d);
   assert.ok(await ff.hasAudio(out), 'recording has sound');
+  console.log('  picture starts at ' + (await ff.firstVideoTime(out)).toFixed(2) + 's in the raw file');
   const mp4 = path.join(dir, 'rec.mp4');
   await ff.finish(out, mp4);
-  assert.ok(fs.statSync(mp4).size > 1000);
+  const d = await ff.duration(mp4);
+  assert.ok(d > 3 && d < 6, 'recording length ' + d);
+  assert.ok(await ff.hasAudio(mp4), 'saved recording has sound');
   // The replay buffer and a clip from it
   const seg = path.join(dir, 'seg'); fs.mkdirSync(seg);
   const r = await startBest({ fps: 30, quality: 'standard', audio: true, segmentDir: seg, segments: 10, mouse: false }, log);
