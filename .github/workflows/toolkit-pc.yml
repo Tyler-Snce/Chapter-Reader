@@ -35,6 +35,13 @@ jobs:
           set -o pipefail
           { npm test && node ffmpeg.test.js; } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
 
+      - name: Start the app and check the window has no errors
+        run: |
+          set -o pipefail
+          npx electron . --smoke 2>&1 | tail -5 | tee -a "$RUNNER_TEMP/build.log" || true
+          cat smoke.txt | tee -a "$RUNNER_TEMP/build.log"
+          grep -q 'errors \[\]' smoke.txt
+
       - name: Build the installer
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'

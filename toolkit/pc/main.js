@@ -432,6 +432,17 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(['media', 'display-capture', 'notifications'].includes(perm)));
 
   createWindow();
+  // Build check: open the window, report any script errors, then quit
+  if (process.argv.includes('--smoke')) {
+    const errors = [];
+    win.webContents.on('console-message', (_e, level, message) => { if (level >= 2) errors.push(message); });
+    win.webContents.on('did-finish-load', () => setTimeout(async () => {
+      const info = await win.webContents.executeJavaScript(
+        "JSON.stringify({ mp4: MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2'), webm: MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus'), tabs: document.querySelectorAll('.tab').length })");
+      fs.writeFileSync(path.join(process.cwd(), 'smoke.txt'), 'info ' + info + '\nerrors ' + JSON.stringify(errors));
+      quitting = true; app.exit(errors.length ? 1 : 0);
+    }, 5000));
+  }
   createTray();
   registerHotkeys();
   if (settings.watcherOn) watcher.start();
