@@ -1,0 +1,70 @@
+name: Build screenshare scanner
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'toolkit/scanner/**'
+      - '.github/workflows/scanner.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: toolkit/scanner
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build
+        run: |
+          set -o pipefail
+          dotnet build -c Release -o out 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          ls -la out | tee -a "$RUNNER_TEMP/build.log"
+
+      - name: Test with fake cheat files
+        shell: pwsh
+        run: |
+          # A fake cheat mod (class names only) and a fake cheat download, to check they're found
+          $mods = Join-Path $env:APPDATA '.minecraft\mods'
+          New-Item -ItemType Directory -Force -Path $mods | Out-Null
+          $tmp = Join-Path $env:RUNNER_TEMP 'fakemod'
+          New-Item -ItemType Directory -Force -Path "$tmp\a\b\module" | Out-Null
+          foreach ($c in 'KillAura','AimAssist','Reach','Velocity') { Set-Content "$tmp\a\b\module\$c.class" 'x' }
+          Set-Content "$tmp\fabric.mod.json" '{"name":"Totally Normal Mod"}'
+          Compress-Archive -Path "$tmp\*" -DestinationPath "$mods\optifine-renamed.zip" -Force
+          Move-Item "$mods\optifine-renamed.zip" "$mods\optifine-renamed.jar" -Force
+          Set-Content (Join-Path $env:USERPROFILE 'Downloads\vape-lite.exe') 'x'
+          $exe = (Resolve-Path out\StaffToolkit-Scan.exe).Path
+          $p = Start-Process -FilePath $exe -ArgumentList '--test', "$env:RUNNER_TEMP\scan.json" -Wait -PassThru
+          Get-Content "$env:RUNNER_TEMP\scan.txt" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
+          $t = Get-Content "$env:RUNNER_TEMP\scan.txt" -Raw
+          if ($t -notmatch 'cheat features') { throw 'fake cheat mod not detected' }
+          if ($t -notmatch 'vape') { throw 'fake cheat download not detected' }
+
+      - name: Publish download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp out/StaffToolkit-Scan.exe StaffToolkit-Scan.exe
+          gh release delete ss-scanner --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          gh release create ss-scanner StaffToolkit-Scan.exe \
+            --repo "${{ github.repository }}" \
+            --title "Staff Toolkit Scan (screenshare checker)" \
+            --notes "For players during a staff screenshare: download StaffToolkit-Scan.exe and run it. It only looks for Minecraft cheats; nothing is sent unless you press Upload. Build ${{ github.run_number }}." \
+            --latest=false
+
+      - name: Save log for troubleshooting
+        if: always()
+        run: |
+          mkdir -p /tmp/logs && cd /tmp/logs
+          cp "$RUNNER_TEMP/build.log" build.log 2>/dev/null || echo "no log" > build.log
+          git init -q -b logs-scanner
+          git config user.name "build-bot"; git config user.email "build-bot@users.noreply.github.com"
+          git add build.log && git commit -qm "Scanner build log ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs-scanner

@@ -14,3 +14,6 @@ toolkit/pc/dist/
 toolkit/android/build/
 toolkit/android/app/build/
 toolkit/android/.gradle/
+toolkit/scanner/bin/
+toolkit/scanner/obj/
+toolkit/scanner/out/
