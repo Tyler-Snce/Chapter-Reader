@@ -1,0 +1,22 @@
+name: DB test
+on:
+  push:
+    branches: [dbtest]
+permissions:
+  contents: write
+jobs:
+  t:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Test
+        run: |
+          DB=https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app/progress/zz-ci-test
+          {
+          echo "PUT root:"; curl -s -X PUT -d '{"url":"https://a.com/x/chapter-1","para":1,"title":"t","updated":1,"device":"ci"}' $DB.json; echo
+          echo "PATCH lib:"; curl -s -X PATCH -d '{"url":"https://a.com/x/chapter-1","para":2,"title":"t","updated":2,"device":"ci","library/a_com_x":{"series":"X","url":"https://a.com/x/chapter-1","para":2,"title":"t","updated":2,"manga":false,"deleted":false}}' $DB.json; echo
+          echo "POST override:"; curl -s -X POST -H "X-HTTP-Method-Override: PATCH" -d '{"para":3,"library/b_com_y":{"series":"Y","url":"u","para":1,"title":"t","updated":3,"manga":true,"deleted":false}}' $DB.json; echo
+          echo "GET:"; curl -s $DB.json; echo
+          echo "DELETE:"; curl -s -X DELETE $DB.json; echo
+          } > out.txt 2>&1
+          cat out.txt
+          mkdir o && cp out.txt o/ && cd o && git init -q -b logs-db && git config user.name bot && git config user.email bot@users.noreply.github.com && git add . && git commit -qm o && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs-db
