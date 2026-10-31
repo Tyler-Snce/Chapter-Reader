@@ -46,7 +46,7 @@ class Capture {
       a.push('-i', 'desktop');
     }
     // Sound, sent by the app through a pipe
-    if (o.audio) a.push('-use_wallclock_as_timestamps', '1', '-thread_queue_size', '4096', '-f', 's16le', '-ar', String(RATE), '-ac', '2', '-i', this.pipe);
+    if (o.audio) a.push('-use_wallclock_as_timestamps', '1', '-thread_queue_size', '4096', '-probesize', '32', '-analyzeduration', '0', '-f', 's16le', '-ar', String(RATE), '-ac', '2', '-i', this.pipe);
 
     // Both inputs are timed by the clock, then shifted by the same amount, so sound and picture line up
     const shift = 'setpts=PTS-' + t0.toFixed(6) + '/TB';
@@ -76,7 +76,12 @@ class Capture {
   async start() {
     if (this.o.audio) {
       this.pipe = '\\\\.\\pipe\\staff-toolkit-' + process.pid + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
-      this.server = net.createServer((s) => { this.sock = s; s.on('error', () => {}); });
+      this.server = net.createServer((s) => {
+        this.sock = s;
+        s.on('error', () => {});
+        // Silence until the app's sound arrives, so recording never waits for it
+        this.silence = setInterval(() => { if (!this.gotSound) this.rawWrite(Buffer.alloc(960 * 4)); }, 20);
+      });
       await new Promise((res, rej) => { this.server.once('error', rej); this.server.listen(this.pipe, res); });
     }
     const t0 = Date.now() / 1000;
@@ -101,6 +106,11 @@ class Capture {
 
   /** Sound from the app (16-bit stereo at 48 kHz). */
   write(buf) {
+    this.gotSound = true;
+    this.rawWrite(buf);
+  }
+
+  rawWrite(buf) {
     if (this.sock && !this.sock.destroyed) { try { this.sock.write(buf); } catch (_) {} }
   }
 
@@ -119,6 +129,7 @@ class Capture {
   kill() { try { this.proc && this.proc.kill(); } catch (_) {} }
 
   cleanupPipe() {
+    clearInterval(this.silence);
     try { this.sock && this.sock.destroy(); } catch (_) {}
     try { this.server && this.server.close(); } catch (_) {}
     this.sock = null; this.server = null;
@@ -143,6 +154,7 @@ async function startBest(base, log) {
   for (const t of tries) {
     const o = { ...base, ...t };
     const c = new Capture(o);
+    if (base.onCreate) base.onCreate(c);
     try {
       await c.start();
       if (log) log('capture: ' + o.method + ' + ' + o.enc);

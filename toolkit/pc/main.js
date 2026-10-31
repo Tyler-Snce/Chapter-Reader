@@ -381,7 +381,8 @@ ipcMain.handle('ff-start', async (_e, { kind, audio }) => {
   if (kind === 'record') {
     if (caps.record) return true;
     const raw = path.join(tmp, 'rec-' + Date.now() + '.mkv');
-    const c = await capture.startBest({ ...base, out: raw }, logCap);
+    const c = await capture.startBest({ ...base, out: raw, onCreate: (x) => { caps.recordStarting = x; } }, logCap);
+    caps.recordStarting = null;
     caps.record = c; caps.recordRaw = raw;
     c.onClose = () => {
       // Stopped by itself: save what was recorded
@@ -391,7 +392,8 @@ ipcMain.handle('ff-start', async (_e, { kind, audio }) => {
     if (caps.replay) return true;
     const dir = path.join(tmp, 'replay-' + Date.now());
     fs.mkdirSync(dir, { recursive: true });
-    const c = await capture.startBest({ ...base, segmentDir: dir, segments: Math.ceil(300 / 5) + 4 }, logCap);
+    const c = await capture.startBest({ ...base, segmentDir: dir, segments: Math.ceil(300 / 5) + 4, onCreate: (x) => { caps.replayStarting = x; } }, logCap);
+    caps.replayStarting = null;
     caps.replay = c; caps.replayDir = dir;
     c.onClose = () => { if (caps.replay === c) { caps.replay = null; send('ff-ended', 'replay'); } };
   }
@@ -457,8 +459,9 @@ ipcMain.handle('ff-clip', async (_e, { seconds, flagId }) => {
 
 // Sound from the window, passed on to whatever is recording
 ipcMain.on('pcm', (_e, buf) => {
-  if (caps.record) caps.record.write(buf);
-  if (caps.replay) caps.replay.write(buf);
+  const r = caps.record || caps.recordStarting; const p = caps.replay || caps.replayStarting;
+  if (r) r.write(buf);
+  if (p) p.write(buf);
 });
 ipcMain.handle('capture-log', () => capLog.join('\n'));
 
