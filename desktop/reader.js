@@ -97,6 +97,66 @@ async function syncPull() {
   } catch (_) { return false; }
 }
 
+// ---------- new chapter alerts ----------
+// Every few hours each series in the library is checked for a chapter newer than the last one
+// seen. The first check of a series only notes its newest chapter.
+
+let alertsRunning = false;
+async function checkAlerts() {
+  if (alertsRunning || settings.alertsOn === false) return 0;
+  alertsRunning = true;
+  let found = 0;
+  try {
+    await syncPull();
+    const state = settings.alertState || {};
+    const page = async (u) => {
+      try { const r = await ipcRenderer.invoke('fetch', u); const c = parseChapter(r.html, r.url); return c ? { url: c.url, title: c.heading || c.title, next: c.next } : null; } catch (_) { return null; }
+    };
+    const entries = Object.entries(library()).filter(([, e]) => e && !e.deleted && e.url)
+      .sort((a, b) => (b[1].updated || 0) - (a[1].updated || 0)).slice(0, 40);
+    for (const [id, e] of entries) {
+      const known = state[id];
+      let url = (known && known.latest) || e.url;
+      let p = await page(url);
+      if (!p) continue;
+      let title = p.title, hops = 0;
+      // Follow "next chapter" links until there isn't one: that's the newest chapter
+      while (hops < 6 && p.next && p.next.split('#')[0] !== url.split('#')[0]) {
+        const np = await page(p.next);
+        // A "next" link to the series' main page isn't a new chapter
+        if (!np || seriesOf(np.url, np.title).id !== id) break;
+        p = np; url = np.url; title = np.title; hops++;
+      }
+      state[id] = { latest: url, title, checked: Date.now() };
+      if (known && hops > 0) {
+        found++;
+        ipcRenderer.send('alert', {
+          title: e.series,
+          body: (hops > 1 ? hops + ' new chapters, up to ' + title : 'New: ' + title) + '\nClick to carry on from where you left off.',
+          url: e.url, para: e.para || 0,
+        });
+      }
+    }
+    settings.alertState = state;
+    settings.alertsChecked = Date.now();
+    ipcRenderer.send('settings-set', { alertState: state, alertsChecked: settings.alertsChecked });
+  } finally {
+    alertsRunning = false;
+    showAlertsInfo();
+  }
+  return found;
+}
+
+function showAlertsInfo() {
+  const el = document.getElementById('alertsInfo');
+  if (!el) return;
+  el.textContent = settings.alertsChecked ? 'Last checked ' + ago(settings.alertsChecked) : 'Not checked yet';
+}
+
+// Check a couple of minutes after starting, then every 3 hours
+setTimeout(() => checkAlerts(), 2 * 60 * 1000);
+setInterval(() => checkAlerts(), 3 * 60 * 60 * 1000);
+
 function ago(t) {
   const s = (Date.now() - t) / 1000;
   if (s < 90) return 'just now';
@@ -1004,6 +1064,18 @@ $('libBtn').addEventListener('click', () => {
   if (show) { showLibraryList(); syncPush().then(showLibraryList); }
 });
 $('libClose').addEventListener('click', () => $('library').classList.remove('show'));
+$('alertsOn').addEventListener('change', () => {
+  settings.alertsOn = $('alertsOn').checked;
+  ipcRenderer.send('settings-set', { alertsOn: settings.alertsOn });
+});
+$('alertsCheck').addEventListener('click', async () => {
+  const first = !settings.alertState;
+  $('alertsInfo').textContent = 'Checking\u2026';
+  const n = await checkAlerts();
+  $('alertsInfo').textContent = first ? 'Done. From now on you\'ll be told when new chapters come out.'
+    : n === 0 ? 'No new chapters yet' : n + (n === 1 ? ' series has' : ' series have') + ' a new chapter';
+});
+ipcRenderer.on('open-save', (_e, { url, para }) => { $('library').classList.remove('show'); loadChapter(url, true, para || 0); });
 
 $('engine').addEventListener('change', (e) => {
   settings.engine = e.target.value;
@@ -1067,6 +1139,8 @@ ipcRenderer.invoke('settings-get').then((s) => {
   $('artPace').value = String(settings.artPace ?? 1);
   showPace();
   showMarks();
+  $('alertsOn').checked = settings.alertsOn !== false;
+  showAlertsInfo();
   $('syncUser').value = settings.syncUser || '';
   $('syncPin').value = settings.syncPin || '';
   if (!syncOn()) $('syncRow').style.display = 'none';

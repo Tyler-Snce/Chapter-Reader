@@ -49,6 +49,7 @@ class MainActivity : Activity(), ReaderService.Listener {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ChapterAlerts.schedule(this, prefs)
         window.statusBarColor = BG
         window.navigationBarColor = BG
 
@@ -320,6 +321,7 @@ class MainActivity : Activity(), ReaderService.Listener {
             .setTitle("Library")
             .setItems(labels) { _, which -> openSave(entries[which]) }
             .setNegativeButton("Close", null)
+            .setNeutralButton("\uD83D\uDD14 Alerts") { _, _ -> showAlerts() }
             .create()
         dialog.setOnShowListener {
             dialog.listView.setOnItemLongClickListener { _, _, which, _ ->
@@ -344,6 +346,39 @@ class MainActivity : Activity(), ReaderService.Listener {
             prefs.edit().putInt("libraryTips", tips + 1).apply()
             Toast.makeText(this, "Tip: press and hold one to remove it", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** New chapter alerts: turn them on or off, or check right now. */
+    private fun showAlerts() {
+        val on = ChapterAlerts.enabled(prefs)
+        val last = prefs.getLong("alertsChecked", 0)
+        val msg = (if (on) "On: your library is checked every few hours and you get a notification when a new chapter comes out."
+            else "Off.") + if (last > 0) "\n\nLast checked ${Library.ago(last)}." else ""
+        android.app.AlertDialog.Builder(this)
+            .setTitle("New chapter alerts")
+            .setMessage(msg)
+            .setPositiveButton(if (on) "Turn off" else "Turn on") { _, _ ->
+                ChapterAlerts.setEnabled(this, prefs, !on)
+                Toast.makeText(this, if (on) "Chapter alerts off" else "Chapter alerts on", Toast.LENGTH_SHORT).show()
+            }
+            .setNeutralButton("Check now") { _, _ ->
+                Toast.makeText(this, "Checking your library for new chapters\u2026", Toast.LENGTH_SHORT).show()
+                Thread {
+                    val first = prefs.getString("alertState", null) == null
+                    Sync.pull(prefs)
+                    val n = ChapterAlerts.check(this, prefs)
+                    runOnUiThread {
+                        Toast.makeText(this, when {
+                            first -> "Done. From now on you'll be told when new chapters come out."
+                            n == 0 -> "No new chapters yet"
+                            n == 1 -> "1 series has a new chapter"
+                            else -> "$n series have new chapters"
+                        }, Toast.LENGTH_LONG).show()
+                    }
+                }.start()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun openSave(e: Library.Entry) {

@@ -1,6 +1,6 @@
 // Chapter Reader for PC: a floating bubble that reads web novel chapters aloud.
 const {
-  app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, globalShortcut, clipboard,
+  app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, globalShortcut, clipboard, Notification,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -121,6 +121,17 @@ function openReader() {
   reader.show();
   reader.focus();
 }
+
+// New chapter alerts: a Windows notification; clicking it carries on with that series
+const alerts = [];
+ipcMain.on('alert', (_e, { title, body, url, para }) => {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body, icon: path.join(__dirname, 'icon.png') });
+  n.on('click', () => { openReader(); send(reader, 'open-save', { url, para }); });
+  alerts.push(n);   // keep it alive until clicked
+  if (alerts.length > 20) alerts.shift();
+  n.show();
+});
 
 // ---------- reading the browser's address ----------
 
@@ -364,6 +375,9 @@ function registerShortcuts() {
 }
 
 // ---------- start ----------
+
+// Windows needs this for notifications to show the app's name
+if (process.platform === 'win32') app.setAppUserModelId('com.chapterreader.pc');
 
 app.whenReady().then(() => {
   loadSettings();
