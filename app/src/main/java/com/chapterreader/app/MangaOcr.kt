@@ -156,8 +156,42 @@ class MangaOcr(private val userAgent: String) {
         private val watermark = Regex("https?://|www\\.|\\.(com|net|org|io|gg|me)\\b|discord|patreon|ko-fi", RegexOption.IGNORE_CASE)
 
         /** Cleans up recognised text, or returns null for scraps and site watermarks. */
+        private val edgePunct = Regex("^([^\\p{L}\\p{N}|]*)(.*?)([^\\p{L}\\p{N}|]*)$")
+        private val unitRe = Regex("^\\d+(st|nd|rd|th|s|am|pm|k|m|kg|km|x|h)$", RegexOption.IGNORE_CASE)
+        private val tinyUnitRe = Regex("^[01](h|k|x|m|s)$", RegexOption.IGNORE_CASE)
+        private val loneI = Regex("^[1|l]((['\u2019])(m|ll|d|ve))?$", RegexOption.IGNORE_CASE)
+
+        private fun isWord(w: String?): Boolean =
+            w != null && Regex("\\p{L}{2,}").containsMatchIn(w) && !w.any { it.isDigit() }
+
+        /** Fixes letters misread as digits in comic lettering: "1 HEARD" -> "I HEARD", "N0" -> "NO". */
+        fun fixDigits(text: String): String {
+            val words = text.split(" ")
+            val out = words.toMutableList()
+            for (i in words.indices) {
+                val m = edgePunct.find(words[i]) ?: continue
+                val pre = m.groupValues[1]
+                var core = m.groupValues[2]
+                val post = m.groupValues[3]
+                if (core.isEmpty()) continue
+                val next = words.getOrNull(i + 1)
+                val prev = words.getOrNull(i - 1)
+                if (loneI.matches(core) && (isWord(next) || core.length > 1)) {
+                    if (!(core == "l" && !isWord(next))) core = "I" + core.substring(1)
+                } else if (core == "0" && (isWord(next) || isWord(prev))) {
+                    core = "O"
+                } else if (core.any { it.isLetter() } && core.any { it in "0158|" } &&
+                    !(unitRe.matches(core) && !tinyUnitRe.matches(core))
+                ) {
+                    core = core.map { when (it) { '0' -> 'O'; '1' -> 'I'; '5' -> 'S'; '8' -> 'B'; '|' -> 'I'; else -> it } }.joinToString("")
+                }
+                out[i] = pre + core + post
+            }
+            return out.joinToString(" ")
+        }
+
         fun tidy(raw: String): String? {
-            var t = raw.replace(Regex("\\s+"), " ").trim()
+            var t = fixDigits(raw.replace(Regex("\\s+"), " ").trim())
             t = t.replace(Regex("(\\p{L})- (\\p{L})"), "$1$2")          // re-join hyphenated line breaks
             if (watermark.containsMatchIn(t)) return null
             val letters = t.count { it.isLetter() }

@@ -420,9 +420,37 @@ async function readPage(blob, imgIndex) {
   }).filter(Boolean);
 }
 
+/** Fixes letters misread as digits in comic lettering: "1 HEARD" -> "I HEARD", "N0" -> "NO". */
+function fixDigits(t) {
+  const tokens = t.split(/(\s+)/);
+  const isWord = (w) => !!w && /\p{L}{2,}/u.test(w) && !/\d/.test(w);
+  const map = { '0': 'O', '1': 'I', '5': 'S', '8': 'B', '|': 'I' };
+  const words = tokens.map((x, i) => (i % 2 === 0 ? x : null));
+  for (let i = 0; i < tokens.length; i += 2) {
+    const tok = tokens[i];
+    if (!tok) continue;
+    const m = tok.match(/^([^\p{L}\p{N}|]*)(.*?)([^\p{L}\p{N}|]*)$/u);
+    let [, pre, core, post] = m;
+    if (!core) continue;
+    const next = words[i + 2], prev = words[i - 2];
+    // A lone 1 or | used as the word "I" (also "1'm", "1'll")
+    if (/^[1|l](['’](m|ll|d|ve))?$/i.test(core) && (isWord(next) || /^['’]/.test(core.slice(1)))) {
+      if (!(core === 'l' && !isWord(next))) core = 'I' + core.slice(1);
+    } else if (core === '0' && (isWord(next) || isWord(prev))) {
+      core = 'O';
+    } else if (/\p{L}/u.test(core) && /[0158|]/.test(core) &&
+               !(/^\d+(st|nd|rd|th|s|am|pm|k|m|kg|km|x|h)$/i.test(core) && !/^[01](h|k|x|m|s)$/i.test(core))) {
+      // Digits mixed into a word are letters that were misread
+      core = core.replace(/[0158|]/g, (d) => map[d]);
+    }
+    tokens[i] = pre + core + post;
+  }
+  return tokens.join('');
+}
+
 /** Cleans recognised text, or returns null for scraps and site watermarks. */
 function tidy(raw) {
-  let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  let t = fixDigits(String(raw || '').replace(/\s+/g, ' ').trim());
   t = t.replace(/(\p{L})- (\p{L})/gu, '$1$2');
   if (/https?:\/\/|www\.|\.(com|net|org|io|gg|me)\b|discord|patreon|ko-fi/i.test(t)) return null;
   const letters = (t.match(/\p{L}/gu) || []).length;
