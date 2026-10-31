@@ -9,3 +9,8 @@ desktop/dist/
 desktop/piper/
 desktop/voices/
 desktop/tessdata/
+toolkit/pc/node_modules/
+toolkit/pc/dist/
+toolkit/android/build/
+toolkit/android/app/build/
+toolkit/android/.gradle/

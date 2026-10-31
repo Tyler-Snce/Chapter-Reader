@@ -1,0 +1,32 @@
+{
+  "name": "staff-toolkit-pc",
+  "productName": "Staff Toolkit",
+  "version": "1.0.0",
+  "description": "Minecraft chat watcher, screenshots, clips, recordings and a simple video editor",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node rules.test.js && node logwatch.test.js"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.stafftoolkit.pc",
+    "productName": "Staff Toolkit",
+    "files": [
+      "main.js", "app.js", "index.html", "rules.js", "logwatch.js", "upload.js", "ffmpeg.js",
+      "icon.png", "tray.png", "package.json",
+      "node_modules/ffmpeg-static/**"
+    ],
+    "win": { "target": "nsis", "icon": "icon.png" },
+    "nsis": { "oneClick": true, "perMachine": false, "createDesktopShortcut": true, "shortcutName": "Staff Toolkit" },
+    "asar": false
+  },
+  "author": "Tyler-Snce"
+}

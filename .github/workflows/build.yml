@@ -5,7 +5,9 @@ on:
     branches: [main]
     paths-ignore:
       - 'desktop/**'
+      - 'toolkit/**'
       - '.github/workflows/desktop.yml'
+      - '.github/workflows/toolkit-*.yml'
   workflow_dispatch:
 
 permissions:

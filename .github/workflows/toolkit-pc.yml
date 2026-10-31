@@ -1,0 +1,65 @@
+name: Build Staff Toolkit PC
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'toolkit/pc/**'
+      - '.github/workflows/toolkit-pc.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: toolkit/pc
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+
+      - name: Install
+        run: |
+          set -o pipefail
+          npm install --no-audit --no-fund 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+
+      - name: Test chat rules, log following and video jobs
+        run: |
+          set -o pipefail
+          { npm test && node ffmpeg.test.js; } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+
+      - name: Build the installer
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          set -o pipefail
+          npx electron-builder --win nsis --x64 --publish never 2>&1 | tee -a "$RUNNER_TEMP/build.log"
+          cp dist/*.exe StaffToolkit-PC-Setup.exe
+
+      - name: Publish download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete toolkit-pc --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          gh release create toolkit-pc StaffToolkit-PC-Setup.exe \
+            --repo "${{ github.repository }}" \
+            --title "Staff Toolkit for PC" \
+            --notes "Download StaffToolkit-PC-Setup.exe below and run it. Build ${{ github.run_number }}." \
+            --latest=false
+
+      - name: Save log for troubleshooting
+        if: always()
+        run: |
+          mkdir -p /tmp/logs && cd /tmp/logs
+          cp "$RUNNER_TEMP/build.log" build.log 2>/dev/null || echo "no log" > build.log
+          git init -q -b logs-toolkit-pc
+          git config user.name "build-bot"; git config user.email "build-bot@users.noreply.github.com"
+          git add build.log && git commit -qm "Toolkit PC build log ${{ github.run_number }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs-toolkit-pc

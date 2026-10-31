@@ -1,0 +1,324 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Staff Toolkit</title>
+<style>
+  :root {
+    --bg: #111317; --panel: #191c22; --card: #20242c; --line: #2b303a;
+    --btn: #2c313b; --btn-h: #383e4a; --text: #c9ced8; --on: #f3f5f9; --muted: #8a92a2;
+    --accent: #3fb68b; --accent-h: #4cc89a; --danger: #e5484d; --warn: #f0b429; --rec: #ff3b4e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 "Segoe UI", system-ui, sans-serif; display: flex; flex-direction: column; overflow: hidden; }
+  button, input, select, textarea { font: inherit; color: var(--on); }
+  button { background: var(--btn); border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; min-height: 34px; }
+  button:hover { background: var(--btn-h); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #06140e; font-weight: 600; }
+  button.primary:hover { background: var(--accent-h); }
+  button.danger { background: #4a2227; color: #ffd9dc; }
+  button.small { padding: 4px 9px; min-height: 28px; font-size: 13px; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  input[type=text], input[type=password], select, textarea { background: #12151a; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
+  textarea { width: 100%; min-height: 90px; resize: vertical; }
+  input[type=range] { accent-color: var(--accent); }
+  input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+  label { display: flex; align-items: center; gap: 8px; }
+
+  nav { display: flex; gap: 4px; padding: 10px 14px 0; background: var(--panel); border-bottom: 1px solid var(--line); }
+  nav button { background: transparent; border-radius: 8px 8px 0 0; padding: 9px 16px; color: var(--muted); }
+  nav button.on { background: var(--bg); color: var(--on); font-weight: 600; }
+  nav .badge { background: var(--danger); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 11px; margin-left: 6px; }
+  nav .spacer { flex: 1; }
+  #recBadge { display: none; align-self: center; color: var(--rec); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #recBadge.show { display: block; }
+
+  main { flex: 1; overflow-y: auto; padding: 16px; }
+  .tab { display: none; max-width: 1100px; margin: 0 auto; }
+  .tab.on { display: block; }
+  h2 { font-size: 15px; color: var(--on); margin: 18px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .grow { flex: 1; min-width: 0; }
+  .muted { color: var(--muted); }
+  .note { color: var(--muted); font-size: 12.5px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .status { display: flex; gap: 10px; align-items: center; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .dot.ok { background: var(--accent); }
+  .dot.bad { background: var(--warn); }
+  .path { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .flag { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); margin-bottom: 8px; }
+  .flag.done { opacity: .55; }
+  .flag .who { color: var(--on); font-weight: 600; }
+  .flag .msg { color: var(--on); word-break: break-word; }
+  .flag .meta { font-size: 12px; color: var(--muted); }
+  .chip { display: inline-block; background: #3a2226; color: #ffc9cd; border-radius: 6px; padding: 1px 7px; font-size: 12px; margin-right: 4px; }
+  .chip.watch { background: #233048; color: #c5d8ff; }
+  .flag .acts { display: flex; gap: 6px; align-items: flex-start; flex-wrap: wrap; justify-content: flex-end; }
+  #liveChat { max-height: 220px; overflow-y: auto; font-family: Consolas, monospace; font-size: 12.5px; background: #0d0f12; border-radius: 10px; padding: 8px 10px; }
+  #liveChat div { white-space: pre-wrap; word-break: break-word; }
+  #liveChat .hit { color: #ff9aa0; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+
+  .bigbtns { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+  .bigbtns button { min-height: 72px; font-size: 15px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+  .bigbtns small { color: var(--muted); font-size: 12px; }
+  #recBtn.recording { background: var(--rec); color: #fff; }
+  #recBtn.recording small { color: #ffe0e3; }
+  .meter { height: 6px; background: #0d0f12; border-radius: 3px; overflow: hidden; width: 90px; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .08s; }
+  .audioRow { display: grid; grid-template-columns: 26px 1fr 140px 90px; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
+  .audioRow:first-child { border-top: 0; }
+  .audioRow select { width: 100%; }
+
+  .cap { display: grid; grid-template-columns: 54px 1fr auto; gap: 12px; align-items: center; padding: 9px 12px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+  .cap .ico { width: 54px; height: 40px; border-radius: 6px; background: #0d0f12; display: grid; place-items: center; font-size: 20px; overflow: hidden; cursor: grab; }
+  .cap .ico img { width: 100%; height: 100%; object-fit: cover; }
+  .cap .name { color: var(--on); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cap .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .link { color: #8fd6ff; cursor: pointer; text-decoration: underline; }
+
+  .sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 260px; overflow-y: auto; margin-top: 8px; }
+  .src { background: #12151a; border: 2px solid transparent; border-radius: 8px; padding: 6px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 4px; }
+  .src img { width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #000; border-radius: 4px; }
+  .src span { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .src.on { border-color: var(--accent); }
+
+  #busy { display: none; position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #263040; color: var(--on); padding: 9px 16px; border-radius: 10px; box-shadow: 0 6px 24px #0008; }
+  #busy.show { display: block; }
+  #toast { display: none; position: fixed; bottom: 16px; right: 16px; max-width: 420px; background: #2a2f39; color: var(--on); padding: 10px 14px; border-radius: 10px; box-shadow: 0 6px 24px #0008; }
+  #toast.show { display: block; }
+
+  /* Editor */
+  #editor { display: none; position: fixed; inset: 0; background: #0b0d10f2; z-index: 10; padding: 16px; overflow-y: auto; }
+  #editor.show { display: block; }
+  .edWrap { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  .stage { position: relative; background: #000; border-radius: 10px; overflow: hidden; align-self: center; max-width: 100%; }
+  .stage video { display: block; max-width: 100%; max-height: 52vh; }
+  #cropBox { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px #000a; cursor: move; display: none; }
+  #cropBox.show { display: block; }
+  #cropBox i { position: absolute; right: -7px; bottom: -7px; width: 14px; height: 14px; background: var(--accent); border-radius: 3px; cursor: nwse-resize; }
+  .timeline { position: relative; height: 34px; background: #1a1e25; border-radius: 8px; }
+  .timeline .sel { position: absolute; top: 0; bottom: 0; background: #3fb68b33; border-left: 3px solid var(--accent); border-right: 3px solid var(--accent); }
+  .timeline .head { position: absolute; top: -3px; bottom: -3px; width: 2px; background: #fff; }
+  .times { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; font-size: 12.5px; color: var(--muted); }
+  .edGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .edGrid .card { display: flex; flex-direction: column; gap: 8px; }
+  .edGrid h3 { margin: 0; font-size: 14px; color: var(--on); }
+  .val { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { .meter i { transition: none; } }
+</style>
+</head>
+<body>
+<nav>
+  <button data-tab="chat" class="on">Chat watcher <span class="badge" id="flagBadge" hidden>0</span></button>
+  <button data-tab="capture">Capture</button>
+  <button data-tab="settings">Settings</button>
+  <span class="spacer"></span>
+  <span id="recBadge">&#9679; REC <span id="recTime">0:00</span></span>
+</nav>
+
+<main>
+  <!-- CHAT WATCHER -->
+  <section class="tab on" id="tab-chat">
+    <div class="card status">
+      <span class="dot" id="watchDot"></span>
+      <div class="grow">
+        <div id="watchText" style="color:var(--on)">Starting&hellip;</div>
+        <div class="path" id="watchPath"></div>
+      </div>
+      <label><input type="checkbox" id="watcherOn"> Watching</label>
+      <button id="chooseLog" class="small" title="If your launcher isn't found automatically">Choose log&hellip;</button>
+    </div>
+
+    <h2>Flagged messages</h2>
+    <div class="row" style="margin-bottom:8px">
+      <label><input type="checkbox" id="showDone"> Show handled</label>
+      <span class="grow"></span>
+      <button id="clearFlags" class="small">Clear all</button>
+    </div>
+    <div id="flagList"></div>
+
+    <h2>Live chat <span class="note">(what the game is receiving right now)</span></h2>
+    <div id="liveChat"><div class="muted">Join a server and chat will appear here.</div></div>
+  </section>
+
+  <!-- CAPTURE -->
+  <section class="tab" id="tab-capture">
+    <div class="bigbtns">
+      <button id="shotBtn">&#128247; Screenshot<small id="kShot"></small></button>
+      <button id="recBtn">&#9210; Start recording<small id="kRec"></small></button>
+      <button id="clipBtn">&#9194; Save last <span id="clipSecs">30</span>s<small id="kClip"></small></button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label><input type="checkbox" id="replayOn"> Replay buffer: always keep the last
+        <select id="replaySeconds"><option>15</option><option>30</option><option>60</option><option>120</option><option>300</option></select> seconds ready to save</label>
+    </div>
+
+    <div class="grid2" style="margin-top:14px">
+      <div class="card">
+        <h2 style="margin-top:0">Video</h2>
+        <div class="row"><span class="grow">What to capture: <b id="srcName">Main screen</b></span><button id="pickSrc" class="small">Change&hellip;</button></div>
+        <div class="sources" id="sources" hidden></div>
+        <div class="row" style="margin-top:10px">
+          <label>FPS <select id="fps"><option>30</option><option>60</option><option>120</option><option>144</option></select></label>
+          <label>Size <select id="resolution"><option value="native">Full size</option><option value="1440">1440p</option><option value="1080">1080p</option><option value="720">720p</option></select></label>
+          <label>Quality <select id="quality"><option value="standard">Standard</option><option value="high">High</option><option value="max">Best</option></select></label>
+        </div>
+        <p class="note">Tip: for games, use windowed or borderless fullscreen (in Lunar: Settings &rarr; Borderless fullscreen). True fullscreen can record as a black screen.</p>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">Audio <label style="float:right;font-weight:400"><input type="checkbox" id="muted"> Mute everything</label></h2>
+        <div id="audioRows"></div>
+        <button id="addAudio" class="small" style="margin-top:6px">+ Add another audio device</button>
+      </div>
+    </div>
+
+    <h2>Your captures <button id="openFolder" class="small" style="margin-left:8px">Open folder</button></h2>
+    <div id="capList"></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="tab" id="tab-settings">
+    <div class="grid2">
+      <div class="card">
+        <h2 style="margin-top:0">After a capture</h2>
+        <label style="margin-bottom:6px"><input type="radio" name="after" value="upload"> Upload and copy the link</label>
+        <label style="margin-bottom:10px"><input type="radio" name="after" value="save"> Just save the file</label>
+        <label>Upload to
+          <select id="uploadTo">
+            <option value="catbox">Catbox (link anyone can open)</option>
+            <option value="discord">Discord channel</option>
+            <option value="both">Catbox + post the link in Discord</option>
+            <option value="none">Nowhere (save only)</option>
+          </select>
+        </label>
+        <p class="note">Files are always saved on your PC too, in <span class="link" id="folderLink"></span> <button id="chooseFolder" class="small">Change</button></p>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">Discord</h2>
+        <input type="password" id="webhook" placeholder="Paste a webhook link" style="width:100%">
+        <p class="note">In Discord: channel settings &rarr; Integrations &rarr; Webhooks &rarr; New webhook &rarr; Copy webhook URL. Ask the server owner if it's not your server.</p>
+        <div class="row"><button id="saveWebhook" class="small primary">Save</button><button id="testWebhook" class="small">Send a test message</button></div>
+        <label style="margin-top:10px"><input type="checkbox" id="flagsToDiscord"> Post flagged chat messages to this channel</label>
+        <label><input type="checkbox" id="autoClipFlags"> Automatically save a clip when a message is flagged (needs the replay buffer)</label>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">Shortcuts</h2>
+        <p class="note">Click a box, then press the keys you want.</p>
+        <label class="row"><span class="grow">Screenshot</span><input type="text" class="hotkey" data-key="screenshot" readonly></label>
+        <label class="row"><span class="grow">Save last seconds</span><input type="text" class="hotkey" data-key="clip" readonly></label>
+        <label class="row"><span class="grow">Start / stop recording</span><input type="text" class="hotkey" data-key="record" readonly></label>
+        <p class="note" id="hotkeyWarn" style="color:var(--warn)"></p>
+      </div>
+
+      <div class="card">
+        <h2 style="margin-top:0">App</h2>
+        <label><input type="checkbox" id="notifyFlags"> Show a notification for flagged messages</label>
+        <label><input type="checkbox" id="startup"> Start with Windows (in the tray)</label>
+      </div>
+    </div>
+
+    <h2>Chat rules</h2>
+    <div class="grid2">
+      <div class="card">
+        <label><input type="checkbox" class="rule" data-rule="advertising"> Advertising (server addresses, IPs, Discord invites)</label>
+        <label><input type="checkbox" class="rule" data-rule="words"> Blocked words</label>
+        <label><input type="checkbox" class="rule" data-rule="spam"> Spam (repeating, very fast messages)</label>
+        <label><input type="checkbox" class="rule" data-rule="caps"> Excessive caps</label>
+        <label><input type="checkbox" class="rule" data-rule="flood"> Character / word flooding</label>
+        <p class="note">Disguised words are caught too: l33t speak (n00b), spaced out (b a d), stretched (baaad), and addresses like "play (dot) server (dot) net".</p>
+      </div>
+      <div class="card">
+        <b style="color:var(--on)">Blocked words</b> <span class="note">one per line &ndash; paste your server's list</span>
+        <textarea id="blockedWords" spellcheck="false"></textarea>
+      </div>
+      <div class="card">
+        <b style="color:var(--on)">Allowed websites</b> <span class="note">one per line (not counted as advertising)</span>
+        <textarea id="allowDomains" spellcheck="false"></textarea>
+      </div>
+      <div class="card">
+        <b style="color:var(--on)">Watch list</b> <span class="note">every message from these players is shown</span>
+        <textarea id="watchPlayers" spellcheck="false"></textarea>
+        <b style="color:var(--on)">Ignore</b> <span class="note">never flag these (staff, bots)</span>
+        <textarea id="ignorePlayers" spellcheck="false" style="min-height:60px"></textarea>
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px"><button id="saveRules" class="primary">Save rules</button><span class="note" id="rulesSaved"></span></div>
+
+    <h2>Game logs</h2>
+    <div class="card">
+      <p class="note" style="margin-top:0">Lunar and the normal launcher are found automatically. If your launcher (e.g. Orbit) isn't, choose its <b>logs</b> folder or <b>latest.log</b> file.</p>
+      <div id="logPaths"></div>
+      <button id="chooseLog2" class="small">Add a log file or folder&hellip;</button>
+    </div>
+  </section>
+</main>
+
+<!-- EDITOR -->
+<div id="editor" role="dialog" aria-label="Edit video">
+  <div class="edWrap">
+    <div class="row"><b style="color:var(--on);font-size:16px" class="grow" id="edName">Edit</b><button id="edClose">Close</button></div>
+    <div class="stage" id="stage">
+      <video id="edVideo" preload="metadata"></video>
+      <div id="cropBox"><i></i></div>
+    </div>
+    <div class="row">
+      <button id="edPlay" class="small">&#9654; Play</button>
+      <button id="edSetStart" class="small">Start here</button>
+      <button id="edSetEnd" class="small">End here</button>
+      <span class="grow"></span>
+      <span class="note" id="edLen"></span>
+    </div>
+    <div class="timeline" id="timeline"><div class="sel" id="tlSel"></div><div class="head" id="tlHead"></div></div>
+    <div class="times"><span id="edStartT">0:00</span><span id="edNowT">0:00</span><span id="edEndT">0:00</span></div>
+
+    <div class="edGrid">
+      <div class="card">
+        <h3>Crop</h3>
+        <select id="edCrop">
+          <option value="none">No crop</option>
+          <option value="16:9">16:9 (YouTube)</option>
+          <option value="9:16">9:16 (TikTok, Shorts, Reels)</option>
+          <option value="1:1">1:1 (square)</option>
+          <option value="4:5">4:5 (Instagram)</option>
+          <option value="free">Free (drag the corner)</option>
+        </select>
+        <p class="note" style="margin:0">Drag the box to choose what's kept.</p>
+      </div>
+      <div class="card">
+        <h3>Original sound</h3>
+        <label><input type="range" id="edVol" min="0" max="2" step="0.05" value="1" class="grow"><span class="val" id="edVolV">100%</span></label>
+        <button id="edMute" class="small">Mute</button>
+      </div>
+      <div class="card">
+        <h3>Music</h3>
+        <div class="row"><button id="edMusic" class="small">Add music&hellip;</button><span class="note grow" id="edMusicName">None</span><button id="edMusicX" class="small" hidden>Remove</button></div>
+        <label>Volume <input type="range" id="edMusicVol" min="0" max="1.5" step="0.05" value="0.6" class="grow"><span class="val" id="edMusicVolV">60%</span></label>
+        <label>Start the song at <input type="text" id="edMusicOff" value="0:00" style="width:70px"></label>
+        <label><input type="checkbox" id="edFade" checked> Fade out at the end</label>
+        <audio id="edAudio" preload="auto"></audio>
+      </div>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="edExact"> Exact cut (slower, frame-accurate)</label>
+      <span class="grow"></span>
+      <button id="edSave" class="primary">Save edited copy</button>
+    </div>
+    <p class="note">The original file is kept. The edited copy is saved next to it (and uploaded, if that's turned on).</p>
+  </div>
+</div>
+
+<div id="busy"></div>
+<div id="toast" role="status"></div>
+<script src="app.js"></script>
+</body>
+</html>
