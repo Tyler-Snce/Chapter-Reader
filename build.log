@@ -1,0 +1,65 @@
+  Determining projects to restore...
+  Restored D:\a\Chapter-Reader\Chapter-Reader\toolkit\scanner\Scanner.csproj (in 4.91 sec).
+  Scanner -> D:\a\Chapter-Reader\Chapter-Reader\toolkit\scanner\out\StaffToolkit-Scan.exe
+
+Build succeeded.
+    0 Warning(s)
+    0 Error(s)
+
+Time Elapsed 00:00:10.97
+total 121
+drwxr-xr-x 1 runneradmin 197121      0 Oct 31 17:37 .
+drwxr-xr-x 1 runneradmin 197121      0 Oct 31 17:37 ..
+-rwxr-xr-x 1 runneradmin 197121 101888 Oct 31 17:37 StaffToolkit-Scan.exe
+-rw-r--r-- 1 runneradmin 197121    174 Oct 31 17:37 StaffToolkit-Scan.exe.config
+-rw-r--r-- 1 runneradmin 197121  15304 Oct 31 17:37 StaffToolkit-Scan.pdb
+Staff Toolkit Scan 1.0  -  report CBBU-SQG4
+Time: 2026-10-31 17:37:23  (deep check, administrator)
+Games running: none found
+Serious: 7   Suspicious: 5   Info: 4
+
+== SERIOUS ==
+[Mods] Mod contains cheat features: Totally Normal Mod
+    %USERPROFILE%\AppData\Roaming\.minecraft\mods\optifine-renamed.jar
+    Features: aimassist, killaura, reach, velocity
+[Files] Program built to attach to a running Java game: addon.exe
+    %USERPROFILE%\Desktop\MC ADDON\addon.exe
+    Modified just now, not signed
+    This is how injected ghost clients work; normal programs very rarely do this.
+[Files] A program disguised as a file with no type: MC ADDON
+    %USERPROFILE%\Documents\MC ADDON
+    Modified just now, 3 KB
+[Files] Program built to attach to a running Java game: MC ADDON
+    %USERPROFILE%\Documents\MC ADDON
+    Modified just now, not signed
+    This is how injected ghost clients work; normal programs very rarely do this.
+[Files] A Java program disguised as a .war file: coberturaFlush.war
+    C:\cobertura-2.1.1\coberturaFlush.war
+    Modified 4264 days ago (26 Feb 23:22), 7 KB
+[Recent] Cheat-related download: vape-lite.exe
+    %USERPROFILE%\Downloads\vape-lite.exe
+    Downloaded just now
+[Deep check] Windows event logs were cleared 1 days ago (30 Oct 06:45)
+    System log
+
+== SUSPICIOUS ==
+[Game] Minecraft isn't running
+    Ask the player to have the game open (as they were playing) and scan again.
+[Mods] Mod changed in the last 2 hours: optifine-renamed.jar
+    %USERPROFILE%\AppData\Roaming\.minecraft\mods\optifine-renamed.jar
+    Modified just now
+[Programs] Unsigned program running from Temp: provjobd.exe953534395
+    C:\Users\RUNNER~1\AppData\Local\Temp\provjobd.exe953534395
+[Cleaning] The PC was restarted 7 min ago
+    A restart just before a screenshare can clear what's in memory.
+[Deep check] Windows' program history (Prefetch) is almost empty (0 entries)
+    It may have been cleared.
+
+== INFO ==
+[Mods] 1 mods aren't on Modrinth (could be CurseForge mods, or custom/cheat files: check these)
+    optifine-renamed.jar
+[Mods] Checked 2 Java files in game and launcher folders
+[Files] 1 programs in your own folders have no publisher (staff: ask about any you don't recognise)
+    %USERPROFILE%\Desktop\MC ADDON\addon.exe   (31 Oct 2026, 3 KB)
+[Files] Checked 1866 files in user folders and drives for hidden programs
+upload test: report CBBU-SQG4 sent and read back OK
