@@ -282,7 +282,7 @@ async function browserSaveClip(flagId) {
 // ---------- the main recorder (ffmpeg: no mouse cursor, works with fullscreen games) ----------
 // Used for screen recordings and the replay buffer; recording a single window, or if it can't
 // start on this PC, uses the browser-based recorder above instead.
-const isScreen = () => !S.source || S.source.startsWith('screen');
+const isScreen = () => S.captureMode !== 'app';
 const cleanErr = (e) => String((e && e.message) || e).replace(/^Error invoking remote method '[\w-]+': (Error: )?/, '');
 const snd = { ctx: null, parts: [], users: new Set() };
 
@@ -422,28 +422,53 @@ for (const id of ['fps', 'resolution', 'quality']) $(id).addEventListener('chang
 $('showCursor').addEventListener('change', () => { set({ showCursor: $('showCursor').checked }); captureChanged(); });
 
 // What to capture
+function renderSource() {
+  const mode = S.captureMode || 'display';
+  document.querySelectorAll('#modeSeg button').forEach((b) => { const on = b.dataset.mode === mode; b.classList.toggle('on', on); b.setAttribute('aria-checked', on); });
+  $('srcInfo').textContent = mode === 'all' ? 'Every display, recorded as one video.'
+    : mode === 'display' ? 'Display: ' + (S.sourceName && S.source ? S.sourceName : 'main display')
+      : S.appMatch ? 'Records the window named \u201c' + S.appMatch + '\u201d whenever it\'s open.' : 'Choose the game or app to record.';
+  $('pickSrc').hidden = mode === 'all';
+  $('pickSrc').textContent = mode === 'app' ? 'Choose app\u2026' : 'Choose display\u2026';
+  $('gameOnly').hidden = mode !== 'app';
+  $('appMatchRow').hidden = mode !== 'app';
+  $('appMatch').value = S.appMatch || '';
+  if (mode === 'all') $('sources').hidden = true;
+}
+document.querySelectorAll('#modeSeg button').forEach((b) => b.addEventListener('click', () => {
+  set({ captureMode: b.dataset.mode });
+  $('sources').hidden = true;
+  renderSource();
+  captureChanged();
+  if (b.dataset.mode === 'app' && !S.appMatch) $('pickSrc').click();
+}));
+$('appMatch').addEventListener('change', () => { set({ appMatch: $('appMatch').value.trim() }); renderSource(); captureChanged(); });
 $('gameOnly').addEventListener('click', async () => {
   const name = await ipcRenderer.invoke('use-game-window');
   if (!name) { toast('Minecraft isn\'t open \u2013 start the game, then press this again'); return; }
-  $('srcName').textContent = name;
-  toast('Recording only the game window. Windows on top of it won\'t appear (the mouse cursor does show in window recordings).');
+  S.captureMode = 'app'; S.appMatch = name;
+  renderSource();
+  toast('Recording only ' + name + '. Windows on top of it won\'t appear.');
   captureChanged();
 });
 $('pickSrc').addEventListener('click', async () => {
   const box = $('sources');
   if (!box.hidden) { box.hidden = true; return; }
-  box.textContent = 'Loading…';
+  const wantApp = S.captureMode === 'app';
+  box.textContent = 'Loading\u2026';
   box.hidden = false;
-  const list = await ipcRenderer.invoke('sources');
+  const list = (await ipcRenderer.invoke('sources')).filter((x) => (wantApp ? !x.id.startsWith('screen') : x.id.startsWith('screen')) && !/staff toolkit/i.test(x.name));
   box.textContent = '';
-  for (const s of list) {
-    const b = el('button', { class: 'src' + ((S.source || '') === s.id || (!S.source && s.id.startsWith('screen') && !box.querySelector('.on')) ? ' on' : ''), title: s.name, onclick: () => {
-      set({ source: s.id, sourceName: s.name });
-      $('srcName').textContent = s.name;
+  if (!list.length) box.append(el('div', { class: 'note', text: wantApp ? 'No apps open. Start the game first.' : 'No displays found.' }));
+  for (const x of list) {
+    const on = wantApp ? (S.appMatch && x.name.toLowerCase().includes(S.appMatch.toLowerCase())) : (S.source || list[0].id) === x.id;
+    box.append(el('button', { class: 'src' + (on ? ' on' : ''), title: x.name, onclick: async () => {
+      if (wantApp) set({ appMatch: await ipcRenderer.invoke('short-app-name', x.name) });
+      else set({ source: x.id, sourceName: x.name });
       box.hidden = true;
+      renderSource();
       captureChanged();
-    } }, el('img', { src: s.thumb, alt: '' }), el('span', { text: (s.id.startsWith('screen') ? '\u{1F5A5} ' : '') + s.name }));
-    box.append(b);
+    } }, el('img', { src: x.thumb, alt: '' }), el('span', { text: (wantApp ? '' : '\u{1F5A5} ') + x.name })));
   }
 });
 
@@ -555,7 +580,7 @@ function renderSettings() {
   for (const k of ['blockedWords', 'allowDomains', 'watchPlayers', 'ignorePlayers']) $(k).value = (S.rules[k] || []).join('\n');
   $('showCursor').checked = !!S.showCursor; $('fps').value = String(S.fps); $('resolution').value = S.resolution; $('quality').value = S.quality;
   $('replaySeconds').value = String(S.replaySeconds); $('clipSecs').textContent = S.replaySeconds;
-  $('srcName').textContent = S.sourceName || 'Main screen';
+  renderSource();
   renderLogPaths();
 }
 function renderLogPaths() {

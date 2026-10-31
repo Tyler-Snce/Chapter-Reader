@@ -151,8 +151,10 @@ async function startBest(base, log) {
     { method: 'gdi', enc: enc === 'libx264' ? 'libx264' : enc },
     { method: 'gdi', enc: 'libx264' },
   ];
+  // All displays together: only the Windows (GDI) capture can grab the whole desktop at once
+  const list = base.all ? tries.filter((t) => t.method === 'gdi') : tries;
   let last = null;
-  for (const t of tries) {
+  for (const t of list) {
     const o = { ...base, ...t };
     const c = new Capture(o);
     if (base.onCreate) base.onCreate(c);

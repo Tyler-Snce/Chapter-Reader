@@ -84,6 +84,11 @@
   .cap .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .link { color: #8fd6ff; cursor: pointer; text-decoration: underline; }
 
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .seg button { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 6px; }
+  .seg button small { color: var(--muted); font-size: 11.5px; }
+  .seg button.on { background: var(--accent); color: #06140e; font-weight: 600; }
+  .seg button.on small { color: #0b3a28; }
   .sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 260px; overflow-y: auto; margin-top: 8px; }
   .src { background: #12151a; border: 2px solid transparent; border-radius: 8px; padding: 6px; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 4px; }
   .src img { width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #000; border-radius: 4px; }
@@ -164,7 +169,18 @@
     <div class="grid2" style="margin-top:14px">
       <div class="card">
         <h2 style="margin-top:0">Video</h2>
-        <div class="row"><span class="grow">What to capture: <b id="srcName">Main screen</b></span><button id="gameOnly" class="small" title="Record just the Minecraft window \u2013 other windows on top of it won't appear">Only the game</button><button id="pickSrc" class="small">Change&hellip;</button></div>
+        <div style="color:var(--on);margin-bottom:6px">What to capture</div>
+        <div class="seg" id="modeSeg" role="radiogroup" aria-label="What to capture">
+          <button data-mode="all" role="radio">Full screen<small>all displays</small></button>
+          <button data-mode="display" role="radio">One display</button>
+          <button data-mode="app" role="radio">One app<small>e.g. Minecraft</small></button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <span class="grow note" id="srcInfo"></span>
+          <button id="gameOnly" class="small" title="Find the Minecraft window">Minecraft</button>
+          <button id="pickSrc" class="small">Choose&hellip;</button>
+        </div>
+        <label class="row" id="appMatchRow" style="margin-top:6px" hidden>Record windows named <input type="text" id="appMatch" class="grow" placeholder="e.g. Minecraft"></label>
         <div class="sources" id="sources" hidden></div>
         <div class="row" style="margin-top:10px">
           <label>FPS <select id="fps"><option>30</option><option>60</option><option>120</option><option>144</option></select></label>
@@ -172,7 +188,7 @@
           <label>Quality <select id="quality"><option value="standard">Standard</option><option value="high">High</option><option value="max">Best</option></select></label>
         </div>
         <label style="margin-top:8px"><input type="checkbox" id="showCursor"> Show the mouse cursor in recordings</label>
-        <p class="note">Recording a screen works with fullscreen games and leaves out the mouse. Recording a single window uses Windows' standard capture, which always shows the mouse.</p>
+        <p class="note">Full screen and one display work with fullscreen games and leave out the mouse. One app records just that game's window (windows on top of it don't appear), but the mouse shows.</p>
       </div>
 
       <div class="card">

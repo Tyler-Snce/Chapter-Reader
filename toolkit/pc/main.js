@@ -29,7 +29,9 @@ const DEFAULTS = {
   uploadTo: 'catbox',          // 'catbox', 'discord', 'both' or 'none'
   afterCapture: 'upload',      // 'upload' (and copy the link) or 'save'
   autoClipFlags: false,
-  source: '',                  // screen or window to capture ('' = main screen)
+  captureMode: 'display',      // 'all' (every display), 'display' (one), or 'app' (one game/app)
+  source: '',                  // which display ('' = main one)
+  appMatch: '',                // for 'app': windows whose title contains this, e.g. Minecraft
   fps: 60,
   resolution: 'native',        // 'native', '1440', '1080', '720'
   quality: 'high',             // 'standard', 'high', 'max'
@@ -57,6 +59,12 @@ function loadSettings() {
       settings.activeWebhook = id;
     }
     delete settings.discordWebhook;
+    // Older versions stored a specific window; remember it by name instead
+    if (settings.source && settings.source.startsWith('window') && !s.captureMode) {
+      settings.captureMode = 'app';
+      settings.appMatch = shortAppName(settings.sourceName || '');
+      settings.source = '';
+    }
   } catch (_) {}
 }
 /** The Discord webhook in use right now ('' if none). */
@@ -342,20 +350,43 @@ async function doUpload(item) {
   }
 }
 
+/** "Minecraft 1.21.1 - Multiplayer (3rd-party Server)" -> "Minecraft": stays the same between launches. */
+function shortAppName(name) {
+  return String(name || '').split(/\s+[-\u2013\u2014|:]\s+|\s+v?\d+(?:\.\d+)+/)[0].trim() || String(name || '').trim();
+}
+
+/** The open window of the chosen app (found by name, as its window changes every launch). */
+async function findApp(thumb) {
+  const want = (settings.appMatch || '').toLowerCase().trim();
+  if (!want) throw new Error('choose an app to record first (Capture \u2192 One app)');
+  const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: thumb || { width: 0, height: 0 } });
+  const w = sources.find((x) => x.name.toLowerCase().includes(want) && !/staff toolkit/i.test(x.name));
+  if (!w) throw new Error((settings.appMatch || 'The app') + ' isn\'t open (or is minimised)');
+  return w;
+}
+
+async function findDisplay(thumb) {
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: thumb || { width: 0, height: 0 } });
+  return sources.find((s) => s.id === settings.source) || sources[0];
+}
+
 async function pickSource() {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } });
-  return sources.find((s) => s.id === settings.source) || sources.find((s) => s.id.startsWith('screen')) || sources[0];
+  return settings.captureMode === 'app' ? findApp() : findDisplay();
 }
 
 async function screenshot() {
   try {
-    const d = screen.getPrimaryDisplay();
-    const size = { width: Math.round(d.size.width * d.scaleFactor), height: Math.round(d.size.height * d.scaleFactor) };
-    const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: size });
-    const src = sources.find((s) => s.id === settings.source) || sources.find((s) => s.id.startsWith('screen'));
-    if (!src || src.thumbnail.isEmpty()) throw new Error('nothing to capture (is the window minimised?)');
     const file = path.join(folder(), 'Screenshot ' + stamp() + '.png');
-    fs.writeFileSync(file, src.thumbnail.toPNG());
+    if (settings.captureMode === 'all') {
+      // Every display in one picture
+      await ff.run(['-f', 'gdigrab', '-draw_mouse', settings.showCursor ? '1' : '0', '-i', 'desktop', '-frames:v', '1', file]);
+    } else {
+      const d = screen.getPrimaryDisplay();
+      const big = { width: Math.round(d.size.width * d.scaleFactor * 1.5), height: Math.round(d.size.height * d.scaleFactor * 1.5) };
+      const src = settings.captureMode === 'app' ? await findApp(big) : await findDisplay(big);
+      if (!src || src.thumbnail.isEmpty()) throw new Error('nothing to capture (is the window minimised?)');
+      fs.writeFileSync(file, src.thumbnail.toPNG());
+    }
     captured(file, 'screenshot');
   } catch (e) {
     notify('Screenshot failed', e.message);
@@ -375,9 +406,10 @@ ipcMain.handle('use-game-window', async () => {
   const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } });
   const w = sources.find((x) => /minecraft|lunar client|orbit/i.test(x.name) && !/staff toolkit|launcher/i.test(x.name));
   if (!w) return null;
-  setSettings({ source: w.id, sourceName: w.name });
-  return w.name;
+  setSettings({ captureMode: 'app', appMatch: shortAppName(w.name) });
+  return settings.appMatch;
 });
+ipcMain.handle('short-app-name', (_e, name) => shortAppName(name));
 ipcMain.handle('temp-dir', () => { const d = path.join(app.getPath('temp'), 'staff-toolkit'); fs.mkdirSync(d, { recursive: true }); return d; });
 ipcMain.handle('out-file', (_e, kind) => path.join(folder(), (kind === 'clip' ? 'Clip ' : 'Recording ') + stamp() + '.mp4'));
 ipcMain.on('rec-state', (_e, s) => { recState = s; updateTray(); });
@@ -391,8 +423,12 @@ const capLog = [];
 const logCap = (m) => { capLog.push(new Date().toISOString() + ' ' + m); if (capLog.length > 50) capLog.shift(); };
 
 async function captureOptions(audio) {
+  if (settings.captureMode === 'app') throw new Error('one app is being recorded');
+  if (settings.captureMode === 'all') {
+    return { all: true, rect: null, fps: Number(settings.fps) || 60, height: { native: null, 1440: 1440, 1080: 1080, 720: 720 }[settings.resolution] || null,
+      mouse: !!settings.showCursor, quality: settings.quality, audio: !!audio };
+  }
   const id = settings.source || '';
-  if (id && !id.startsWith('screen')) throw new Error('a single window is being recorded');
   const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 } });
   const src = sources.find((s) => s.id === id) || sources[0];
   const monitor = src ? parseInt(src.id.split(':')[1], 10) || 0 : 0;
