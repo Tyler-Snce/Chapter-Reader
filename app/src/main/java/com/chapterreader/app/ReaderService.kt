@@ -420,14 +420,25 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
         ocrIo.execute {
             val reader = ocr ?: MangaOcr(ua).also { ocr = it }
-            ch.images.forEachIndexed { i, url ->
-                if (myGen != mangaGen) return@execute
-                val f = File(dir, "$myGen-$i")
-                val ok = reader.download(url, ch.url, f)
-                if (myGen != mangaGen) return@execute
-                if (ok) handler.post {
-                    if (myGen == mangaGen) { mangaFiles[i] = f.path; each { it.onMangaUpdate() } }
+            // Download the pictures a few at a time, ahead of the text reading, so they show quickly
+            val downloads = Executors.newFixedThreadPool(3)
+            val pages = ch.images.mapIndexed { i, url ->
+                downloads.submit<Boolean> {
+                    if (myGen != mangaGen) return@submit false
+                    val f = File(dir, "$myGen-$i")
+                    val ok = reader.download(url, ch.url, f)
+                    if (ok) handler.post {
+                        if (myGen == mangaGen) { mangaFiles[i] = f.path; each { it.onMangaUpdate() } }
+                    }
+                    ok
                 }
+            }
+            downloads.shutdown()
+            ch.images.forEachIndexed { i, _ ->
+                if (myGen != mangaGen) { downloads.shutdownNow(); return@execute }
+                val f = File(dir, "$myGen-$i")
+                val ok = try { pages[i].get() } catch (_: Exception) { false }
+                if (myGen != mangaGen) { downloads.shutdownNow(); return@execute }
                 val found = if (ok) {
                     try { reader.bubbles(f, i) } catch (_: Throwable) { emptyList() }
                 } else emptyList()

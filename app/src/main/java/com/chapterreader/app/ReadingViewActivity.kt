@@ -22,6 +22,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -41,6 +42,8 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
     private lateinit var rateText: TextView
     private lateinit var manga: WebView
     private lateinit var caption: TextView
+    private lateinit var paceBtn: TextView
+    private val paces = floatArrayOf(0f, 0.3f, 0.6f, 1f, 1.5f, 2.5f, 4f)
     private var mangaFor: String? = null
     private var mangaReady = false
     private val glideTimes = java.util.concurrent.ConcurrentHashMap<Int, Int>()
@@ -121,6 +124,7 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     mangaReady = true
+                    view.evaluateJavascript("pace=${pace()}", null)
                     pushManga()
                 }
             }
@@ -169,6 +173,9 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         row2.addView(button("+") { svc()?.let { it.setRate(it.rate + 0.1f) } }, small())
         row2.addView(button("A−") { setText(textSize - 1f) }, small())
         row2.addView(button("A+") { setText(textSize + 1f) }, small())
+        // Manga only: how quickly to scroll through the artwork between speech bubbles
+        paceBtn = button("") { nextPace() }.apply { visibility = View.GONE }
+        row2.addView(paceBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f).apply { setMargins(px(3), 0, px(3), 0) })
         row2.addView(button("◎ Follow") {
             lastTouch = 0
             if (svc()?.isManga == true) manga.evaluateJavascript("follow()", null) else scrollToCurrent(true)
@@ -260,7 +267,32 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         refresh()
     }
 
+    private fun pace(): Float = prefs.getFloat("artPace", 1f)
+
+    private fun showPace() {
+        val p = pace()
+        paceBtn.text = if (p == 0f) "Art\nOff" else String.format(Locale.UK, "Art\n%.1fs", p)
+        if (mangaReady) manga.evaluateJavascript("pace=$p", null)
+    }
+
+    /** Cycles the artwork pace: off, then from very fast to slow. */
+    private fun nextPace() {
+        val cur = pace()
+        val i = paces.indexOfFirst { it > cur + 0.01f }
+        val next = if (i < 0) paces[0] else paces[i]
+        prefs.edit().putFloat("artPace", next).apply()
+        glideTimes.clear()
+        showPace()
+        Toast.makeText(
+            this,
+            if (next == 0f) "Artwork: off (jump to each bubble)" else String.format(Locale.UK, "Artwork: %.1f seconds per screen", next),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
     private fun showManga(on: Boolean) {
+        paceBtn.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) showPace()
         manga.visibility = if (on) View.VISIBLE else View.GONE
         caption.visibility = if (on) View.VISIBLE else View.GONE
         scroll.visibility = if (on) View.GONE else View.VISIBLE
@@ -463,7 +495,7 @@ function setData(p,b,c){
   nb=b.length;
   if(c!==cur)setCur(c,0);
 }
-var pace=2.5,anim=0;
+var pace=1,anim=0;
 function bub(i){return document.querySelector('.b[data-i="'+i+'"]');}
 function targetY(o){return window.scrollY+o.getBoundingClientRect().top-window.innerHeight/3;}
 function glide(target,ms){
@@ -487,7 +519,7 @@ function setCur(i,ms){
   if(Date.now()-lastTouch>5000)glide(targetY(o),ms);
   // Tell the app how long the glide to the next bubble will take, so it can wait for it
   var n=bub(i+1);
-  if(n){var gap=targetY(n)-targetY(o);var t=gap>window.innerHeight*0.5?Math.min(20000,gap/window.innerHeight*pace*1000):(gap>4?600:0);CRBridge.glideTime(i+1,Math.round(t));}
+  if(n){var gap=targetY(n)-targetY(o);var t=!pace?0:(gap>window.innerHeight*0.5?Math.min(5000,gap/window.innerHeight*pace*1000):(gap>4?400:0));CRBridge.glideTime(i+1,Math.round(t));}
 }
 function follow(){lastTouch=0;var o=bub(cur);if(o)glide(targetY(o),500);}
 ['touchstart','touchmove'].forEach(function(e){addEventListener(e,function(){lastTouch=Date.now();CRBridge.touched();},{passive:true});});
