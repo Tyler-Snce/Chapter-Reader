@@ -34,7 +34,7 @@ async function feed(c, seconds) {
   const mp4 = path.join(dir, 'rec.mp4');
   await ff.finish(out, mp4);
   const d = await ff.duration(mp4);
-  assert.ok(d > 3 && d < 6, 'recording length ' + d);
+  assert.ok(d > 3.5 && d < 9, 'recording length ' + d);   // capture starts ~2s before the test feeds sound
   assert.ok(await ff.hasAudio(mp4), 'saved recording has sound');
   // The replay buffer and a clip from it
   const seg = path.join(dir, 'seg'); fs.mkdirSync(seg);
