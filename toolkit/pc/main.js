@@ -641,6 +641,87 @@ ipcMain.handle('test-discord', async (_e, id) => {
   return true;
 });
 
+// ---------- screenshare sessions ----------
+// Staff start a session and read the code to the player. The player's scanner uploads its report
+// under that code; this app picks it up, shows it, posts it to the selected Discord channel and
+// deletes it from the database. The webhook never leaves this PC.
+
+const SS_DB = 'https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app';
+const SCANNER_URL = 'https://github.com/Tyler-Snce/Chapter-Reader/releases/download/ss-scanner/StaffToolkit-Scan.exe';
+let ss = null;               // { code, started, timer }
+let ssReports = [];
+
+function ssCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for (let i = 0; i < 6; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+
+async function ssPoll() {
+  if (!ss) return;
+  if (Date.now() - ss.started > 3 * 3600 * 1000) { ssStop(); send('ss-state', null); return; }
+  try {
+    const url = SS_DB + '/progress/ss-' + ss.code + '.json';
+    const r = await fetch(url);
+    const rep = await r.json();
+    if (rep && rep.id) {
+      await fetch(url, { method: 'DELETE' }).catch(() => {});
+      rep.received = Date.now();
+      rep.session = ss.code;
+      ssReports.unshift(rep);
+      ssReports = ssReports.slice(0, 50);
+      try { fs.writeFileSync(dataFile('ss-reports'), JSON.stringify(ssReports)); } catch (_) {}
+      send('ss-report', rep);
+      const c = rep.counts || {};
+      notify('Scan report ' + rep.id + ' received', (c.serious || 0) + ' serious, ' + (c.suspicious || 0) + ' suspicious', () => showWindow('ss'));
+      if (settings.ssToDiscord !== false && webhookUrl()) ssToDiscord(rep).catch((e) => send('toast', 'Couldn\'t post the report to Discord: ' + e.message));
+    }
+  } catch (_) {}
+}
+
+async function ssToDiscord(rep) {
+  const c = rep.counts || {};
+  const top = (rep.findings || []).filter((f) => f.level !== 'info').slice(0, 15)
+    .map((f) => (f.level === 'serious' ? '\u{1F534} ' : '\u{1F7E0} ') + '[' + f.area + '] ' + f.title).join('\n');
+  const file = path.join(app.getPath('temp'), 'staff-toolkit', 'Scan report ' + rep.id + '.txt');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, rep.text || '');
+  await upload.toDiscord(webhookUrl(), {
+    file,
+    embed: {
+      title: 'Screenshare scan ' + rep.id + (rep.accounts && rep.accounts.length ? ' \u2013 ' + rep.accounts.join(', ') : ''),
+      description: ((top || 'Nothing serious or suspicious found.') + '\n\nGames: ' + ((rep.games || []).join('; ') || 'none running')).slice(0, 3900),
+      color: c.serious ? 0xe5484d : c.suspicious ? 0xf0b429 : 0x3fb68b,
+      fields: [
+        { name: 'Serious', value: String(c.serious || 0), inline: true },
+        { name: 'Suspicious', value: String(c.suspicious || 0), inline: true },
+        { name: 'Check', value: rep.admin ? 'Deep (admin)' : 'Standard', inline: true },
+      ],
+      footer: { text: 'Staff Toolkit Scan \u00b7 full report attached' },
+      timestamp: new Date(rep.received || Date.now()).toISOString(),
+    },
+  });
+  fs.rm(file, { force: true }, () => {});
+}
+
+function ssStop() {
+  if (!ss) return;
+  clearInterval(ss.timer);
+  fetch(SS_DB + '/progress/ss-' + ss.code + '.json', { method: 'DELETE' }).catch(() => {});
+  ss = null;
+}
+
+ipcMain.handle('ss-start', () => {
+  ssStop();
+  ss = { code: ssCode(), started: Date.now() };
+  ss.timer = setInterval(ssPoll, 3000);
+  return { code: ss.code, url: SCANNER_URL };
+});
+ipcMain.on('ss-stop', () => ssStop());
+ipcMain.handle('ss-init', () => ({ session: ss ? { code: ss.code, url: SCANNER_URL } : null, reports: ssReports, url: SCANNER_URL }));
+ipcMain.handle('ss-post', async (_e, id) => { const r = ssReports.find((x) => x.id === id); if (!r) return false; if (!webhookUrl()) throw new Error('no Discord channel selected'); await ssToDiscord(r); return true; });
+
 // ---------- start ----------
 
 app.on('second-instance', () => showWindow());
@@ -654,6 +735,7 @@ app.on('window-all-closed', (e) => e.preventDefault());
 app.whenReady().then(() => {
   loadSettings();
   flags = loadList('flags');
+  ssReports = loadList('ss-reports');
   captures = loadList('captures').filter((c) => { try { return fs.existsSync(c.file); } catch (_) { return false; } });
   rules.set(settings.rules);
 

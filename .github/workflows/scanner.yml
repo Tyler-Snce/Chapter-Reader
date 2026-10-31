@@ -46,6 +46,13 @@ jobs:
           $t = Get-Content "$env:RUNNER_TEMP\scan.txt" -Raw
           if ($t -notmatch 'cheat features') { throw 'fake cheat mod not detected' }
           if ($t -notmatch 'vape') { throw 'fake cheat download not detected' }
+          # The upload path Staff Toolkit reads from: send, read back, delete
+          $url = 'https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app/progress/ss-CITEST.json'
+          Invoke-RestMethod -Method Put -Uri $url -Body (Get-Content "$env:RUNNER_TEMP\scan.json" -Raw) -ContentType 'application/json' | Out-Null
+          $back = Invoke-RestMethod -Uri $url
+          Invoke-RestMethod -Method Delete -Uri $url | Out-Null
+          if (-not $back.id) { throw 'report upload/readback failed' }
+          "upload test: report $($back.id) sent and read back OK" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
 
       - name: Publish download
         env:

@@ -6,7 +6,7 @@ const CATBOX_LIMIT = 200 * 1024 * 1024;
 const DISCORD_LIMIT = 10 * 1024 * 1024;   // largest file a Discord webhook accepts without boosts
 
 async function fileBlob(file) {
-  const type = /\.png$/i.test(file) ? 'image/png' : /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'video/mp4';
+  const type = /\.png$/i.test(file) ? 'image/png' : /\.jpe?g$/i.test(file) ? 'image/jpeg' : /\.txt$/i.test(file) ? 'text/plain' : 'video/mp4';
   if (fs.openAsBlob) return fs.openAsBlob(file, { type });
   return new Blob([fs.readFileSync(file)], { type });
 }

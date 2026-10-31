@@ -809,12 +809,67 @@ $('edSave').addEventListener('click', async () => {
   } finally { $('edSave').disabled = false; }
 });
 
+// ---------- screenshare ----------
+let ssReports = [];
+let ssUrl = '';
+function ssShowSession(sess) {
+  $('ssSession').hidden = !sess;
+  $('ssStart').textContent = sess ? 'New code' : 'Start session';
+  if (!sess) return;
+  $('ssCode').textContent = sess.code.slice(0, 3) + '-' + sess.code.slice(3);
+  $('ssUrl').textContent = sess.url;
+  ssUrl = sess.url;
+  $('ssWait').textContent = 'Waiting for the report\u2026';
+}
+function ssRender() {
+  const box = $('ssList');
+  box.textContent = '';
+  if (!ssReports.length) { box.append(el('div', { class: 'empty', text: 'Reports from players show up here.' })); return; }
+  for (const r of ssReports) {
+    const c = r.counts || {};
+    const pre = el('pre', { text: r.text || '' });
+    pre.hidden = true;
+    box.append(el('div', { class: 'rep' },
+      el('div', { class: 'row' },
+        el('div', { class: 'grow' },
+          el('b', { style: 'color:var(--on);font-family:Consolas,monospace;font-size:16px', text: r.id }),
+          el('span', { class: 'note', text: '  ' + fmtDate(r.received || Date.now()) + (r.accounts && r.accounts.length ? '  \u00b7  ' + r.accounts.join(', ') : '') + (r.admin ? '  \u00b7  deep check' : '') }),
+          el('div', {},
+            el('span', { class: 'sev', style: 'color:#ff7880', text: (c.serious || 0) + ' serious' }), '  ',
+            el('span', { class: 'sev', style: 'color:var(--warn)', text: (c.suspicious || 0) + ' suspicious' }), '  ',
+            el('span', { class: 'note', text: (c.info || 0) + ' info' }))),
+        el('button', { class: 'small', text: 'Details', onclick: () => { pre.hidden = !pre.hidden; } }),
+        el('button', { class: 'small', text: 'Copy', onclick: () => { ipcRenderer.send('copy', r.text || ''); toast('Report copied'); } }),
+        el('button', { class: 'small', text: 'Post to Discord', onclick: async () => { try { await ipcRenderer.invoke('ss-post', r.id); toast('Posted'); } catch (e) { toast(cleanErr(e)); } } })),
+      pre));
+  }
+}
+$('ssStart').addEventListener('click', async () => ssShowSession(await ipcRenderer.invoke('ss-start')));
+$('ssEnd').addEventListener('click', () => { ipcRenderer.send('ss-stop'); ssShowSession(null); });
+$('ssCopyUrl').addEventListener('click', () => { ipcRenderer.send('copy', ssUrl); toast('Download link copied'); });
+$('ssCopyMsg').addEventListener('click', () => {
+  ipcRenderer.send('copy', 'Please download and run this scanner: ' + ssUrl + '\nWhen it finishes, type the code ' + $('ssCode').textContent + ' and press "Upload to staff". It only checks for Minecraft cheats; nothing is sent unless you press Upload.');
+  toast('Instructions copied \u2013 paste them to the player');
+});
+$('ssRecord').addEventListener('click', () => { toggleRecording(); });
+$('ssToDiscord').addEventListener('change', () => set({ ssToDiscord: $('ssToDiscord').checked }));
+ipcRenderer.on('ss-report', (_e, r) => {
+  ssReports.unshift(r);
+  ssRender();
+  $('ssWait').textContent = 'Report ' + r.id + ' received \u2013 check the ID matches the one on the player\'s screen. Still listening for more scans.';
+  showTab('ss');
+});
+ipcRenderer.on('ss-state', (_e, sess) => ssShowSession(sess));
+
 // ---------- start ----------
 (async () => {
   const init = await ipcRenderer.invoke('init');
   S = init.settings; flags = init.flags; captures = init.captures; currentServer = init.server; watchStatus = init.watchStatus;
   renderSettings(); renderFlags(); renderCaptures(); renderWatch(watchStatus);
   $('folderLink').textContent = init.folder;
+  const ssi = await ipcRenderer.invoke('ss-init');
+  ssReports = ssi.reports || []; ssShowSession(ssi.session); ssRender();
+  $('ssToDiscord').checked = S.ssToDiscord !== false;
   await loadDevices();
   if (S.replayOn) startReplay();
   pushState();

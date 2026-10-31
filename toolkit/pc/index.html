@@ -82,6 +82,9 @@
   .cap .ico img { width: 100%; height: 100%; object-fit: cover; }
   .cap .name { color: var(--on); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cap .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .rep { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .rep pre { white-space: pre-wrap; word-break: break-word; font: 12.5px/1.45 Consolas, monospace; background: #0d0f12; border-radius: 8px; padding: 10px; max-height: 420px; overflow: auto; margin: 8px 0 0; }
+  .rep .sev { font-weight: 600; }
   .link { color: #8fd6ff; cursor: pointer; text-decoration: underline; }
 
   .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
@@ -124,6 +127,7 @@
 <nav>
   <button data-tab="chat" class="on">Chat watcher <span class="badge" id="flagBadge" hidden>0</span></button>
   <button data-tab="capture">Capture</button>
+  <button data-tab="ss">Screenshare</button>
   <button data-tab="settings">Settings</button>
   <span class="spacer"></span>
   <span id="recBadge">&#9679; REC <span id="recTime">0:00</span></span>
@@ -200,6 +204,37 @@
 
     <h2>Your captures <button id="openFolder" class="small" style="margin-left:8px">Open folder</button></h2>
     <div id="capList"></div>
+  </section>
+
+  <!-- SCREENSHARE -->
+  <section class="tab" id="tab-ss">
+    <div class="card">
+      <div class="row">
+        <div class="grow">
+          <h2 style="margin:0 0 4px">Screenshare check</h2>
+          <div class="note">Start a session, read the code to the player, and have them run the scanner. You'll see the results on their screen, and when they press Upload the report comes here and to your Discord channel.</div>
+        </div>
+        <button id="ssStart" class="primary">Start session</button>
+      </div>
+      <div id="ssSession" hidden style="margin-top:12px">
+        <div class="row" style="align-items:flex-end;gap:18px">
+          <div><div class="note">Code for the player</div><div id="ssCode" style="font:700 34px Consolas,monospace;color:var(--on);letter-spacing:2px"></div></div>
+          <div class="grow">
+            <div class="note">Scanner download (send this to the player)</div>
+            <div class="row"><span class="path grow" id="ssUrl"></span><button id="ssCopyUrl" class="small">Copy link</button><button id="ssCopyMsg" class="small">Copy instructions</button></div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <span class="dot ok"></span><span class="grow" id="ssWait">Waiting for the report…</span>
+          <button id="ssRecord" class="small">⏺ Record the screenshare</button>
+          <button id="ssEnd" class="small">End session</button>
+        </div>
+      </div>
+      <label style="margin-top:10px"><input type="checkbox" id="ssToDiscord"> Post reports to the selected Discord channel</label>
+      <p class="note" style="margin-bottom:0">The scanner finds signs, not proof. Well-hidden cheats can be missed and normal software can look suspicious, so read the details before deciding. Only run it with the player's agreement, as your server's rules allow.</p>
+    </div>
+    <h2>Reports</h2>
+    <div id="ssList"></div>
   </section>
 
   <!-- SETTINGS -->
