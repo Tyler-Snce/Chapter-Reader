@@ -53,10 +53,30 @@ function loadSettings() {
 function saveSettings() {
   try { fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2)); } catch (_) {}
 }
+// Where captures are saved. A drive root like "T:\" already exists and can't be "created",
+// so only missing folders are made; if a folder can't be used, fall back and say so.
+let warnedFolder = '';
+function usable(f) {
+  try {
+    if (!fs.existsSync(f)) {
+      if (fs.existsSync(path.dirname(f))) fs.mkdirSync(f);
+      else fs.mkdirSync(f, { recursive: true });
+    }
+    fs.accessSync(f, fs.constants.W_OK);
+    return true;
+  } catch (_) { return false; }
+}
 function folder() {
-  const f = settings.folder || path.join(app.getPath('videos'), 'Staff Toolkit');
-  fs.mkdirSync(f, { recursive: true });
-  return f;
+  const choices = [settings.folder, path.join(app.getPath('videos'), 'Staff Toolkit'), path.join(app.getPath('documents'), 'Staff Toolkit')];
+  for (const f of choices) {
+    if (!f || !usable(f)) continue;
+    if (settings.folder && f !== settings.folder && warnedFolder !== settings.folder) {
+      warnedFolder = settings.folder;
+      send('toast', 'Couldn\'t save to ' + settings.folder + ' \u2013 saving to ' + f + ' instead. You can pick another folder in Settings.');
+    }
+    return f;
+  }
+  return app.getPath('temp');
 }
 const stamp = () => new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+/, '');
 
