@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shield with an eye: Staff Toolkit -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FF3FB68B" android:pathData="M54,28 L76,36 L74,58 L54,80 L34,58 L32,36 Z" />
+    <path android:fillColor="#FF111317" android:pathData="M40,54 C44,46 64,46 68,54 C64,62 44,62 40,54 Z" />
+    <path android:fillColor="#FFF3F5F9" android:pathData="M54,49 A5,5 0 1,1 53.99,49 Z" />
+    <path android:fillColor="#FF111317" android:pathData="M54,52 A2,2 0 1,1 53.99,52 Z" />
+</vector>
