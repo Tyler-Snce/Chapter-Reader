@@ -67,7 +67,8 @@ class Capture {
       a.push('-f', 'segment', '-segment_time', '5', '-reset_timestamps', '1', '-segment_wrap', String(o.segments || 30),
         '-segment_format', 'mpegts', path.join(o.segmentDir, 'seg%03d.ts'));
     } else {
-      a.push(o.out);
+      // Start the file at the first real frame (sound and picture keep their timing)
+      a.push('-avoid_negative_ts', 'make_zero', o.out);
     }
     return a;
   }
