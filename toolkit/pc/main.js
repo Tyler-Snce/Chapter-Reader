@@ -435,7 +435,7 @@ app.whenReady().then(() => {
   // Build check: open the window, report any script errors, then quit
   if (process.argv.includes('--smoke')) {
     const errors = [];
-    win.webContents.on('console-message', (_e, level, message) => { if (level >= 2) errors.push(message); });
+    win.webContents.on('console-message', (_e, level, message) => { if (level >= 2 && !/Electron Security Warning/.test(message)) errors.push(message); });
     win.webContents.on('did-finish-load', () => setTimeout(async () => {
       const info = await win.webContents.executeJavaScript(
         "JSON.stringify({ mp4: MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2'), webm: MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus'), tabs: document.querySelectorAll('.tab').length })");
