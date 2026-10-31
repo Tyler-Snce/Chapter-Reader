@@ -37,6 +37,9 @@ jobs:
             curl -sSLf -o voices/en_GB-cori-high.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/en_GB-cori-high.onnx
             curl -sSLf -o voices/en_GB-cori-high.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/en_GB-cori-high.onnx.json
             ls -la voices
+            mkdir -p tessdata
+            curl -sSLf -o tessdata/eng.traineddata.gz https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz
+            ls -la tessdata
           } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
 
       - name: Test the Cori voice

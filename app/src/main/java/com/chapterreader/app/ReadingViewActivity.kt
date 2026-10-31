@@ -15,10 +15,15 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
 /**
@@ -34,6 +39,10 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
     private lateinit var bar: ProgressBar
     private lateinit var playBtn: TextView
     private lateinit var rateText: TextView
+    private lateinit var manga: WebView
+    private lateinit var caption: TextView
+    private var mangaFor: String? = null
+    private var mangaReady = false
 
     private val paraViews = ArrayList<TextView>()
     private var builtFor: String? = null
@@ -100,6 +109,31 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         }
         root.addView(scroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
+        // Manga / webtoon pages, with the speech bubble being read outlined
+        manga = WebView(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(BG)
+            settings.javaScriptEnabled = true
+            settings.allowFileAccess = true
+            addJavascriptInterface(MangaBridge(), "CRBridge")
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String?) {
+                    mangaReady = true
+                    pushManga()
+                }
+            }
+        }
+        root.addView(manga, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        caption = TextView(this).apply {
+            visibility = View.GONE
+            textSize = 15f
+            setTextColor(TEXT_ON)
+            setBackgroundColor(HIGHLIGHT)
+            setPadding(px(16), px(10), px(16), px(10))
+            maxLines = 4
+        }
+        root.addView(caption)
+
         // Controls
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -133,7 +167,10 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         row2.addView(button("+") { svc()?.let { it.setRate(it.rate + 0.1f) } }, small())
         row2.addView(button("A−") { setText(textSize - 1f) }, small())
         row2.addView(button("A+") { setText(textSize + 1f) }, small())
-        row2.addView(button("◎ Follow") { lastTouch = 0; scrollToCurrent(true) },
+        row2.addView(button("◎ Follow") {
+            lastTouch = 0
+            if (svc()?.isManga == true) manga.evaluateJavascript("follow()", null) else scrollToCurrent(true)
+        },
             LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.6f).apply { setMargins(px(3), 0, px(3), 0) })
         controls.addView(row2)
         root.addView(controls)
@@ -175,6 +212,18 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
             refresh()
             return
         }
+        if (ch.isManga) {
+            showManga(true)
+            if (mangaFor != ch.url) {
+                mangaFor = ch.url
+                mangaReady = false
+                manga.loadDataWithBaseURL("file:///", MANGA_HTML, "text/html", "utf-8", null)
+            } else pushManga()
+            builtFor = null
+            refresh()
+            return
+        }
+        showManga(false)
         if (ch.url != builtFor) {
             list.removeAllViews()
             paraViews.clear()
@@ -209,7 +258,39 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         refresh()
     }
 
+    private fun showManga(on: Boolean) {
+        manga.visibility = if (on) View.VISIBLE else View.GONE
+        caption.visibility = if (on) View.VISIBLE else View.GONE
+        scroll.visibility = if (on) View.GONE else View.VISIBLE
+        if (!on) mangaFor = null
+    }
+
+    /** Sends the downloaded pages and found speech bubbles to the manga view. */
+    private fun pushManga() {
+        val s = svc() ?: return
+        if (!mangaReady || !s.isManga) return
+        val pages = JSONArray()
+        s.mangaFiles.forEach { pages.put(it ?: JSONObject.NULL) }
+        val bubbles = JSONArray()
+        s.bubbles.forEach { b ->
+            bubbles.put(JSONArray().put(b.img).put(b.x.toDouble()).put(b.y.toDouble()).put(b.w.toDouble()).put(b.h.toDouble()))
+        }
+        manga.evaluateJavascript("setData($pages,$bubbles,${s.currentPara})", null)
+        caption.text = s.bubbleText(s.currentPara) ?: if (s.mangaDone) "" else "Reading the pictures\u2026"
+    }
+
+    inner class MangaBridge {
+        @JavascriptInterface
+        fun tap(i: Int) { runOnUiThread { svc()?.startAtPara(i) } }
+    }
+
     private fun highlight(i: Int, smooth: Boolean) {
+        if (svc()?.isManga == true) {
+            current = i
+            if (mangaReady) manga.evaluateJavascript("setCur($i,$smooth)", null)
+            caption.text = svc()?.bubbleText(i) ?: ""
+            return
+        }
         if (i != current) {
             paraViews.getOrNull(current)?.apply {
                 background = null
@@ -254,7 +335,12 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         }
         val total = paraViews.size
         val p = s?.progress ?: 0f
-        progressText.text = if (total > 0) {
+        progressText.text = if (s?.isManga == true) {
+            val n = s.bubbles.size
+            val pages = s.mangaFiles.count { it != null }
+            (if (n > 0) String.format(Locale.UK, "Bubble %d of %d", (s.currentPara + 1).coerceIn(1, n), n) else "No speech bubbles yet") +
+                (if (s.mangaDone) "" else " \u00b7 reading page $pages of ${s.mangaFiles.size}")
+        } else if (total > 0) {
             String.format(
                 Locale.UK, "Paragraph %d of %d · %d%%",
                 (current + 1).coerceIn(1, total), total, (p * 100).toInt()
@@ -280,7 +366,13 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
 
     override fun onChapterChanged(url: String) = rebuild()
 
+    override fun onMangaUpdate() {
+        pushManga()
+        refresh()
+    }
+
     override fun onWord(para: Int, start: Int, end: Int) {
+        if (svc()?.isManga == true) return
         if (para != current) highlight(para, smooth = true)
         val tv = paraViews.getOrNull(para) ?: return
         val plain = tv.text.toString()
@@ -333,6 +425,38 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
     }
 
     companion object {
+        /** The manga page: images stacked full width, an outline over the bubble being read. */
+        private val MANGA_HTML = """
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;background:#121016;color:#8e879c;font:15px sans-serif}
+.pg{position:relative;width:100%}
+.pg img{display:block;width:100%;height:auto}
+.wait{height:70vh;display:flex;align-items:center;justify-content:center}
+.b{position:absolute;border-radius:12px}
+.b.cur{outline:3px solid #7b5cff;outline-offset:4px;background:rgba(123,92,255,.10)}
+</style></head><body><div id="pages"></div>
+<script>
+var nb=0,cur=-1,lastTouch=0;
+function setData(p,b,c){
+  var box=document.getElementById('pages');
+  while(box.children.length<p.length){var d=document.createElement('div');d.className='pg';d.innerHTML='<div class="wait">Loading page\u2026</div>';box.appendChild(d);}
+  for(var i=0;i<p.length;i++){var d=box.children[i];if(p[i]&&!d.dataset.src){d.dataset.src=p[i];var w=d.querySelector('.wait');if(w)w.remove();var im=document.createElement('img');im.src='file://'+p[i];d.insertBefore(im,d.firstChild);}}
+  for(var j=nb;j<b.length;j++){var q=b[j],d=box.children[q[0]];if(!d)continue;var o=document.createElement('div');o.className='b';
+    o.style.left=(q[1]*100)+'%';o.style.top=(q[2]*100)+'%';o.style.width=(q[3]*100)+'%';o.style.height=(q[4]*100)+'%';
+    o.dataset.i=j;o.onclick=function(){CRBridge.tap(+this.dataset.i)};d.appendChild(o);}
+  nb=b.length;
+  if(c!==cur)setCur(c,false);
+}
+function setCur(i,smooth){
+  var old=document.querySelector('.b.cur');if(old)old.classList.remove('cur');
+  cur=i;var o=document.querySelector('.b[data-i="'+i+'"]');if(!o)return;o.classList.add('cur');
+  if(Date.now()-lastTouch>5000){var r=o.getBoundingClientRect();window.scrollTo({top:window.scrollY+r.top-window.innerHeight/3,behavior:smooth?'smooth':'auto'});}
+}
+function follow(){lastTouch=0;setCur(cur,true);}
+['touchstart','touchmove'].forEach(function(e){addEventListener(e,function(){lastTouch=Date.now();},{passive:true});});
+</script></body></html>
+"""
         private val BG = 0xFF121016.toInt()
         private val PANEL = 0xFF1D1B22.toInt()
         private val SURFACE = 0xFF34303D.toInt()

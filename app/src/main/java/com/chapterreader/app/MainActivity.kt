@@ -297,7 +297,18 @@ class MainActivity : Activity(), ReaderService.Listener {
         web.evaluateJavascript(Scripts.EXTRACT) { result ->
             val ch = try { parseChapter(result) } catch (_: Exception) { null }
             if (ch == null) {
-                Toast.makeText(this, "Couldn't find story text on this page", Toast.LENGTH_LONG).show()
+                // Not a text chapter: let the reader fetch it, which also handles manga / webtoons
+                val url = web.url
+                if (url == null || !url.startsWith("http")) {
+                    Toast.makeText(this, "Couldn't find story text on this page", Toast.LENGTH_LONG).show()
+                    return@evaluateJavascript
+                }
+                maybeAskOverlay()
+                startForegroundService(
+                    Intent(this, ReaderService::class.java)
+                        .setAction(ReaderService.ACTION_LOAD_URL)
+                        .putExtra(ReaderService.EXTRA_URL, url)
+                )
                 return@evaluateJavascript
             }
             maybeAskOverlay()

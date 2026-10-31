@@ -63,6 +63,19 @@ function setChapter(ch) {
   clips = new Map();
   st.chapter = ch;
   st.items = [];
+  mangaGen++;
+  pageUrls.forEach((u) => URL.revokeObjectURL(u));
+  pageUrls = [];
+  bubbles = [];
+  if (ch.images && ch.images.length) {
+    st.idx = 0;
+    pendingStart = -1;
+    renderManga(ch);
+    startManga(ch);
+    return;
+  }
+  mangaDone = true; waitingText = false; pendingStart = -1;
+  $('caption').classList.remove('show');
   ch.paras.forEach((t, p) => {
     let cursor = 0;
     for (const c of chunks(t)) {
@@ -88,7 +101,9 @@ async function loadChapter(url, autoplay, startPara = 0) {
     const ch = parseChapter(page.html, page.url);
     if (!ch) throw new Error('no story text was found on that page');
     setChapter(ch);
-    if (startPara > 0) {
+    if (isManga()) {
+      pendingStart = startPara > 0 ? startPara : -1;
+    } else if (startPara > 0) {
       const at = st.items.findIndex((it) => it.p >= startPara);
       if (at >= 0) st.idx = at;
       highlight(st.items[st.idx].p);
@@ -146,8 +161,9 @@ function saveProgress() {
 
 function play() {
   if (!st.chapter && !st.loading) { resume(); return; }
-  if (!st.chapter || st.loading || !st.items.length) return;
-  if (st.idx >= st.items.length) st.idx = 0;
+  if (!st.chapter || st.loading) return;
+  if (!st.items.length && !isManga()) return;
+  if (st.idx >= st.items.length && (!isManga() || mangaDone)) st.idx = 0;
   st.playing = true;
   speak();
   push();
@@ -189,6 +205,12 @@ async function speak() {
 }
 
 function finished() {
+  // Manga: the pictures are still being read, so wait for more speech bubbles
+  if (isManga() && (!mangaDone || pendingStart >= 0)) {
+    waitingText = true;
+    setStatus('Reading the pictures\u2026');
+    return;
+  }
   const next = st.chapter && st.chapter.next;
   if (settings.auto && next) {
     loadChapter(next, true);
@@ -240,6 +262,194 @@ function setRate(r) {
   if (st.playing) speak(); else push();
 }
 
+// ---------- manga / webtoon ----------
+// Page images are downloaded and read one by one; speech bubbles become the
+// "paragraphs", so reading starts while later pages are still loading.
+
+let mangaGen = 0;
+let mangaDone = true;
+let waitingText = false;
+let pendingStart = -1;
+let bubbles = [];
+let pageUrls = [];
+let pageEls = [];
+const isManga = () => !!(st.chapter && st.chapter.images && st.chapter.images.length);
+
+function renderManga(ch) {
+  text.innerHTML = '';
+  paraEls = [];
+  current = -1;
+  pageEls = [];
+  if (ch.heading) {
+    const h = document.createElement('h2');
+    h.textContent = ch.heading;
+    text.appendChild(h);
+  }
+  ch.images.forEach(() => {
+    const d = document.createElement('div');
+    d.className = 'pg';
+    d.innerHTML = '<div class="wait">Loading page\u2026</div>';
+    text.appendChild(d);
+    pageEls.push(d);
+  });
+  $('caption').textContent = 'Reading the pictures\u2026';
+  $('caption').classList.add('show');
+  text.scrollTop = 0;
+}
+
+async function startManga(ch) {
+  const gen = mangaGen;
+  mangaDone = false;
+  waitingText = false;
+  for (let i = 0; i < ch.images.length; i++) {
+    if (gen !== mangaGen) return;
+    let blob;
+    try {
+      const r = await ipcRenderer.invoke('image', { url: ch.images[i], referer: ch.url });
+      blob = new Blob([r.data], { type: r.mime });
+    } catch (_) { continue; }
+    if (gen !== mangaGen) return;
+    const url = URL.createObjectURL(blob);
+    pageUrls[i] = url;
+    const d = pageEls[i];
+    if (d) { d.innerHTML = ''; const im = document.createElement('img'); im.src = url; d.appendChild(im); }
+    let found = [];
+    try { found = await readPage(blob, i); } catch (e) { console.warn('OCR failed', e); }
+    if (gen !== mangaGen) return;
+    addBubbles(found);
+    push();
+  }
+  if (gen !== mangaGen) return;
+  mangaDone = true;
+  if (pendingStart >= 0) pendingStart = -1;
+  if (!bubbles.length) setStatus('No text found in these pictures');
+  if (waitingText) { waitingText = false; if (bubbles.length) setStatus(''); if (st.playing) speak(); }
+  push();
+}
+
+/** Reads the text in one page, slicing tall webtoon strips so small text stays readable. */
+async function readPage(blob, imgIndex) {
+  const bmp = await createImageBitmap(blob);
+  const W = bmp.width, H = bmp.height;
+  const scale = W > 1600 ? 0.5 : 1;
+  const tileH = Math.min(H, W * 2);
+  const overlap = Math.min(Math.floor(tileH / 4), Math.floor(W / 3));
+  const found = [];
+  for (let top = 0; top < H;) {
+    const bottom = Math.min(H, top + tileH);
+    const cw = Math.round(W * scale), ch = Math.round((bottom - top) * scale);
+    const canvas = new OffscreenCanvas(cw, ch);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bmp, 0, top, W, bottom - top, 0, 0, cw, ch);
+    const png = await canvas.convertToBlob({ type: 'image/png' });
+    const res = await ipcRenderer.invoke('ocr', new Uint8Array(await png.arrayBuffer()));
+    for (const b of res) {
+      found.push({ l: b.l / scale, t: b.t / scale + top, r: b.r / scale, b: b.b / scale + top, text: b.text, lineH: Math.max(1, b.lineH / scale) });
+    }
+    if (bottom >= H) break;
+    top = bottom - overlap;
+  }
+  bmp.close();
+  // Remove text seen twice where slices overlap
+  const share = (a, b) => {
+    const iw = Math.min(a.r, b.r) - Math.max(a.l, b.l), ih = Math.min(a.b, b.b) - Math.max(a.t, b.t);
+    if (iw <= 0 || ih <= 0) return 0;
+    return (iw * ih) / Math.max(1, Math.min((a.r - a.l) * (a.b - a.t), (b.r - b.l) * (b.b - b.t)));
+  };
+  const unique = [];
+  for (const b of found.sort((x, y) => y.text.length - x.text.length)) if (!unique.some((u) => share(u, b) > 0.5)) unique.push(b);
+  // Join pieces of the same bubble that were read separately
+  for (let merged = true; merged;) {
+    merged = false;
+    outer: for (let i = 0; i < unique.length; i++) for (let j = 0; j < unique.length; j++) {
+      if (i === j) continue;
+      const a = unique[i], c = unique[j];
+      const gap = c.t - a.b, lh = Math.max(a.lineH, c.lineH);
+      const horiz = Math.min(a.r, c.r) - Math.max(a.l, c.l);
+      if (gap >= -lh && gap <= lh * 0.7 && horiz > Math.min(a.r - a.l, c.r - c.l) / 3 && c.t >= a.t) {
+        a.text += ' ' + c.text; a.l = Math.min(a.l, c.l); a.r = Math.max(a.r, c.r); a.b = Math.max(a.b, c.b);
+        unique.splice(j, 1); merged = true; break outer;
+      }
+    }
+  }
+  // Reading order: rows top to bottom, left to right within a row
+  unique.sort((a, c) => {
+    const sameRow = Math.min(a.b, c.b) - Math.max(a.t, c.t) > Math.min(a.b - a.t, c.b - c.t) * 0.4;
+    return sameRow ? a.l - c.l : a.t - c.t;
+  });
+  return unique.map((b) => {
+    const t = tidy(b.text);
+    return t ? { img: imgIndex, x: b.l / W, y: b.t / H, w: (b.r - b.l) / W, h: (b.b - b.t) / H, text: t } : null;
+  }).filter(Boolean);
+}
+
+/** Cleans recognised text, or returns null for scraps and site watermarks. */
+function tidy(raw) {
+  let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  t = t.replace(/(\p{L})- (\p{L})/gu, '$1$2');
+  if (/https?:\/\/|www\.|\.(com|net|org|io|gg|me)\b|discord|patreon|ko-fi/i.test(t)) return null;
+  const letters = (t.match(/\p{L}/gu) || []).length;
+  if (letters < 2 || letters < t.length / 3) return null;
+  const upper = (t.match(/\p{Lu}/gu) || []).length;
+  if (upper > letters * 0.7) {
+    t = t.toLowerCase().replace(/(^|[.!?]\s+)(\p{Ll})/gu, (_, a, b) => a + b.toUpperCase());
+    t = t.replace(/\bi\b/g, 'I').replace(/\bi'/g, "I'");
+  }
+  return t;
+}
+
+function addBubbles(found) {
+  const ch = st.chapter;
+  for (const b of found) {
+    const pi = ch.paras.length;
+    ch.paras.push(b.text);
+    bubbles.push(b);
+    const d = pageEls[b.img];
+    if (d) {
+      const o = document.createElement('div');
+      o.className = 'bub';
+      o.style.left = (b.x * 100) + '%'; o.style.top = (b.y * 100) + '%';
+      o.style.width = (b.w * 100) + '%'; o.style.height = (b.h * 100) + '%';
+      o.dataset.i = pi;
+      o.title = b.text;
+      o.addEventListener('click', () => startAt(pi));
+      d.appendChild(o);
+    }
+    let cursor = 0;
+    for (const c of chunks(b.text)) {
+      let at = b.text.indexOf(c, cursor);
+      if (at < 0) at = b.text.indexOf(c.slice(0, 20), cursor);
+      st.items.push({ p: pi, text: c, offset: at });
+      if (at >= 0) cursor = at + c.length;
+    }
+  }
+  if (pendingStart >= 0) {
+    const i = st.items.findIndex((it) => it.p >= pendingStart);
+    if (i >= 0) { st.idx = i; pendingStart = -1; }
+  }
+  if (waitingText && pendingStart < 0 && st.idx < st.items.length) {
+    waitingText = false;
+    setStatus('');
+    if (st.playing) speak();
+  }
+}
+
+function highlightBubble(i) {
+  const old = text.querySelector('.bub.cur');
+  if (old) old.classList.remove('cur');
+  current = i;
+  $('caption').textContent = (st.chapter.paras[i]) || (mangaDone ? '' : 'Reading the pictures\u2026');
+  const o = text.querySelector('.bub[data-i="' + i + '"]');
+  if (o) {
+    o.classList.add('cur');
+    if (following()) {
+      const r = o.getBoundingClientRect(), box = text.getBoundingClientRect();
+      text.scrollTop += r.top - (box.top + box.height / 3);
+    }
+  }
+  saveProgress();
+}
+
 // ---------- view ----------
 
 let paraEls = [];
@@ -268,6 +478,7 @@ function renderText() {
 function following() { return Date.now() - lastUserScroll > 5000; }
 
 function highlight(i) {
+  if (isManga()) { highlightBubble(i); return; }
   if (i === current) return;
   const old = paraEls[current];
   if (old) { old.classList.remove('cur'); delete old.dataset.ws; old.textContent = st.chapter.paras[current]; }
@@ -280,6 +491,7 @@ function highlight(i) {
 }
 
 function markWord(p, s, e) {
+  if (isManga()) return;
   if (p !== current) highlight(p);
   const el = paraEls[p];
   if (!el) return;
@@ -316,6 +528,13 @@ function setStatus(msg) {
 
 function progressText() {
   if (!st.chapter) return '';
+  if (isManga()) {
+    const n = bubbles.length;
+    const loaded = pageUrls.filter(Boolean).length;
+    const cur = Math.min(n, ((st.items[st.idx] || {}).p ?? n - 1) + 1);
+    return (n ? `Bubble ${Math.max(1, cur)} of ${n}` : 'No speech bubbles yet') +
+      (mangaDone ? '' : ` \u00b7 reading page ${loaded} of ${st.chapter.images.length}`);
+  }
   const total = st.chapter.paras.length;
   const p = Math.min(total, ((st.items[st.idx] || {}).p ?? total - 1) + 1);
   const pct = st.items.length ? Math.round((st.idx / st.items.length) * 100) : 0;
@@ -366,6 +585,7 @@ $('smaller').addEventListener('click', () => setTextSize(settings.textSize - 1))
 $('bigger').addEventListener('click', () => setTextSize(settings.textSize + 1));
 $('follow').addEventListener('click', () => {
   lastUserScroll = 0;
+  if (isManga()) { highlightBubble(current); return; }
   const el = paraEls[current];
   if (el) el.scrollIntoView({ block: 'center' });
 });

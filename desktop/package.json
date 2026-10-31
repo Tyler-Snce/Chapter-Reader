@@ -10,7 +10,8 @@
     "dist": "electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "tesseract.js": "^5.1.1"
   },
   "devDependencies": {
     "electron": "^33.2.1",
@@ -42,6 +43,10 @@
       {
         "from": "browser-url.ps1",
         "to": "browser-url.ps1"
+      },
+      {
+        "from": "tessdata",
+        "to": "tessdata"
       }
     ],
     "win": {
@@ -53,7 +58,11 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "shortcutName": "Chapter Reader"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/tesseract.js/**",
+      "node_modules/tesseract.js-core/**"
+    ]
   },
   "author": "Tyler-Snce"
 }

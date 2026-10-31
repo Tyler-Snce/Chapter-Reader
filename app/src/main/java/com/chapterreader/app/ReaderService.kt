@@ -45,6 +45,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         fun onLoadFailed(url: String)
         /** The word being spoken: character range [start, end) within paragraph [para]. */
         fun onWord(para: Int, start: Int, end: Int) {}
+        /** New manga pages or speech bubbles are ready to show. */
+        fun onMangaUpdate() {}
     }
 
     private data class Item(val p: Int, val text: String, val offset: Int)
@@ -83,6 +85,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     private val io = Executors.newSingleThreadExecutor()
     private val audioIo = Executors.newSingleThreadExecutor()
     private val syncIo = Executors.newSingleThreadExecutor()
+    private val ocrIo = Executors.newSingleThreadExecutor()
     private lateinit var tts: TextToSpeech
     private lateinit var session: MediaSession
     private lateinit var prefs: SharedPreferences
@@ -276,6 +279,9 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         bubble = null
         session.release()
         io.shutdownNow()
+        mangaGen++
+        ocrIo.shutdownNow()
+        try { ocr?.close() } catch (_: Exception) {}
         instance = null
         each { it.onStateChanged() }
         super.onDestroy()
@@ -309,6 +315,14 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         }
         idx = if (startPara > 0) items.indexOfFirst { it.p >= startPara }.coerceAtLeast(0) else 0
         chapter = ch
+        if (ch.isManga) {
+            pendingStart = if (startPara > 0) startPara else -1
+            startManga(ch)
+        } else {
+            mangaGen++
+            bubbles.clear(); bubbleTexts.clear(); mangaFiles.clear()
+            mangaDone = true; waitingText = false; pendingStart = -1
+        }
         status = ""
         prefs.edit().putString("lastUrl", ch.url).apply()
         each { it.onChapterChanged(ch.url) }
@@ -377,6 +391,87 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     // ---------- speech ----------
 
+    // ---------- manga / webtoon ----------
+    // Page images are downloaded and read one by one in the background. Speech
+    // bubbles become the "paragraphs", so reading can start while later pages load.
+
+    private var ocr: MangaOcr? = null
+    private var mangaGen = 0
+    private var waitingText = false
+    private var pendingStart = -1
+    val bubbles = ArrayList<Bubble>()
+    private val bubbleTexts = ArrayList<String>()
+    /** Local copy of each page image, or null while it's still downloading. */
+    val mangaFiles = ArrayList<String?>()
+    var mangaDone = true
+        private set
+    val isManga: Boolean get() = chapter?.isManga == true
+
+    private fun startManga(ch: Chapter) {
+        val myGen = ++mangaGen
+        bubbles.clear(); bubbleTexts.clear(); mangaFiles.clear()
+        repeat(ch.images.size) { mangaFiles.add(null) }
+        mangaDone = false
+        waitingText = false
+        val dir = File(cacheDir, "manga").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+        val ua = prefs.getString("ua", null)
+            ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
+        ocrIo.execute {
+            val reader = ocr ?: MangaOcr(ua).also { ocr = it }
+            ch.images.forEachIndexed { i, url ->
+                if (myGen != mangaGen) return@execute
+                val f = File(dir, "$myGen-$i")
+                val ok = reader.download(url, ch.url, f)
+                if (myGen != mangaGen) return@execute
+                if (ok) handler.post {
+                    if (myGen == mangaGen) { mangaFiles[i] = f.path; each { it.onMangaUpdate() } }
+                }
+                val found = if (ok) {
+                    try { reader.bubbles(f, i) } catch (_: Throwable) { emptyList() }
+                } else emptyList()
+                handler.post { if (myGen == mangaGen) addBubbles(found) }
+            }
+            handler.post {
+                if (myGen != mangaGen) return@post
+                mangaDone = true
+                if (pendingStart >= 0) { pendingStart = -1 }
+                if (bubbles.isEmpty()) status = "No text found in these pictures"
+                each { it.onMangaUpdate() }
+                if (waitingText) { waitingText = false; status = if (bubbles.isEmpty()) status else ""; if (playing) speakCurrent() }
+                notifyState()
+            }
+        }
+    }
+
+    private fun addBubbles(found: List<Bubble>) {
+        for (b in found) {
+            val pi = bubbleTexts.size
+            bubbles.add(b)
+            bubbleTexts.add(b.text)
+            var cursor = 0
+            for (c in Extractor.chunks(b.text)) {
+                var at = b.text.indexOf(c, cursor)
+                if (at < 0) at = b.text.indexOf(c.take(20), cursor)
+                items.add(Item(pi, c, at))
+                if (at >= 0) cursor = at + c.length
+            }
+        }
+        if (pendingStart >= 0) {
+            val i = items.indexOfFirst { it.p >= pendingStart }
+            if (i >= 0) { idx = i; pendingStart = -1 }
+        }
+        each { it.onMangaUpdate() }
+        if (waitingText && pendingStart < 0 && idx < items.size) {
+            waitingText = false
+            status = ""
+            if (playing) speakCurrent()
+            notifyState()
+        }
+    }
+
+    /** Text of speech bubble [i] (manga), for showing what's being read. */
+    fun bubbleText(i: Int): String? = bubbleTexts.getOrNull(i)
+
     // ---------- resume where you left off ----------
 
     private fun saveProgress() {
@@ -429,9 +524,10 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     fun play() {
         if (chapter == null && !loading) { resume(); return }
-        if (chapter == null || items.isEmpty() || loading) return
+        if (chapter == null || loading) return
+        if (items.isEmpty() && !isManga) return
         if (checkEngineChanged() || !ttsReady) { playWhenReady = true; return }
-        if (idx >= items.size) idx = 0
+        if (idx >= items.size && (!isManga || mangaDone)) idx = 0
         playing = true
         errors = 0
         acquireWake()
@@ -827,6 +923,14 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun chapterFinished() {
+        // Manga: the pictures are still being read, so wait for more speech bubbles
+        if (isManga && (!mangaDone || pendingStart >= 0)) {
+            waitingText = true
+            status = "Reading the pictures\u2026"
+            acquireWake()
+            notifyState()
+            return
+        }
         val next = chapter?.next
         if (autoNext && next != null) {
             loadChapter(next, true)

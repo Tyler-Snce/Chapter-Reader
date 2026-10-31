@@ -34,6 +34,14 @@
   main p:hover { background: #1b1822; }
   main p.cur { background: var(--highlight); color: var(--text-on); }
   main p .w { background: var(--word); color: #fff; border-radius: 4px; padding: 0 1px; }
+  .pg { position: relative; max-width: 820px; margin: 0 auto; }
+  .pg img { display: block; width: 100%; height: auto; }
+  .pg .wait { height: 60vh; display: grid; place-items: center; color: var(--muted); }
+  .bub { position: absolute; border-radius: 12px; cursor: pointer; }
+  .bub:hover { background: rgba(123,92,255,.08); }
+  .bub.cur { outline: 3px solid var(--accent); outline-offset: 4px; background: rgba(123,92,255,.12); }
+  #caption { display: none; background: var(--highlight); color: var(--text-on); padding: 10px 18px; font-size: 15px; max-height: 6.5em; overflow-y: auto; }
+  #caption.show { display: block; }
   .empty { color: var(--muted); font-size: 16px; max-width: 46ch; }
   .empty kbd { background: var(--btn); padding: 1px 6px; border-radius: 4px; font: inherit; color: var(--text-on); }
   footer { background: var(--panel); padding: 8px; display: flex; flex-direction: column; gap: 6px; }
@@ -72,6 +80,7 @@
   </div>
 </main>
 
+<div id="caption"></div>
 <footer>
   <div class="row">
     <button data-cmd="prevch">&#9198;<small>Chapter</small></button>

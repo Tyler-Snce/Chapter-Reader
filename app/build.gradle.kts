@@ -50,4 +50,6 @@ android {
 
 dependencies {
     implementation("org.jsoup:jsoup:1.17.2")
+    // On-device text recognition for reading manga speech bubbles (works offline)
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }

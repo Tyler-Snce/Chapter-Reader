@@ -86,6 +86,8 @@ document.addEventListener('click',function(e){
     val EXTRACT = CORE + """
 (function(){
   var ex=window.__cr.extract(document);
+  var big=0;document.querySelectorAll('img').forEach(function(im){if((im.naturalWidth||im.width)>=300)big++;});
+  if(big>=2&&(!ex||ex.texts.join('').length<400))return {ok:false,manga:true};
   if(!ex||!ex.texts.length)return {ok:false};
   var l=window.__cr.links(document,location.href);
   var start=0;

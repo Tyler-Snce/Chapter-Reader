@@ -225,6 +225,40 @@ ipcMain.handle('fetch', async (_e, url) => {
   if (!r.ok) throw new Error('the site answered ' + r.status);
   return { html: await r.text(), url: r.url };
 });
+// Manga: download a page image (sites often only allow it when it looks like it came from their page)
+ipcMain.handle('image', async (_e, { url, referer }) => {
+  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Referer': referer, 'Accept': 'image/avif,image/webp,image/*,*/*;q=0.8' }, redirect: 'follow' });
+  if (!r.ok) throw new Error('image ' + r.status);
+  return { data: Buffer.from(await r.arrayBuffer()), mime: r.headers.get('content-type') || 'image/jpeg' };
+});
+
+// Manga: read the text in a slice of a page (offline text recognition)
+let ocrWorker = null;
+async function getOcr() {
+  if (ocrWorker) return ocrWorker;
+  const { createWorker } = require('tesseract.js');
+  ocrWorker = await createWorker('eng', 1, {
+    langPath: res('tessdata'),
+    cachePath: path.join(app.getPath('userData'), 'tessdata-cache'),
+    gzip: true,
+  });
+  return ocrWorker;
+}
+ipcMain.handle('ocr', async (_e, png) => {
+  const worker = await getOcr();
+  const { data } = await worker.recognize(Buffer.from(png), {}, { blocks: true, text: false });
+  const out = [];
+  for (const b of data.blocks || []) {
+    for (const p of b.paragraphs || []) {
+      if ((p.confidence || 0) < 45) continue;
+      const lines = p.lines || [];
+      const lineH = lines.length ? (p.bbox.y1 - p.bbox.y0) / lines.length : (p.bbox.y1 - p.bbox.y0);
+      out.push({ l: p.bbox.x0, t: p.bbox.y0, r: p.bbox.x1, b: p.bbox.y1, text: p.text, lineH });
+    }
+  }
+  return out;
+});
+
 ipcMain.handle('synth', (_e, { text, engine, voice, rate }) =>
   engine === 'edge' ? edgeTts.synth(text, voice, rate) : piperSynth(text, rate));
 

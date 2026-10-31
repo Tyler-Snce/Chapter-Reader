@@ -98,13 +98,56 @@ function chunks(text, max = 300) {
   return out;
 }
 
+const SKIP_IMG = /logo|avatar|icon|banner|emoji|gravatar|sprite|\/ads?\/|advert|loading|placeholder|spinner|thumb/i;
+
+/** The address of a picture, including lazy-loaded ones that keep it in data-src etc. */
+function imageUrl(img, base) {
+  const abs = (v) => { try { const u = new URL(v, base).href; return /^https?:/.test(u) ? u : null; } catch (_) { return null; } };
+  for (const a of ['data-src', 'data-lazy-src', 'data-original', 'data-url', 'data-cfsrc', 'data-pagespeed-lazy-src']) {
+    const v = img.getAttribute(a);
+    if (v && v.trim()) { const u = abs(v.trim()); if (u) return u; }
+  }
+  const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
+  if (srcset) {
+    const last = srcset.split(',').map((s) => s.trim().split(' ')[0]).filter(Boolean).pop();
+    if (last) { const u = abs(last); if (u) return u; }
+  }
+  const src = img.getAttribute('src');
+  return src ? abs(src.trim()) : null;
+}
+
+/** The chapter's page images: the biggest group of pictures that sit together. */
+function images(doc, base) {
+  const all = Array.from(doc.querySelectorAll('img')).filter((img) => {
+    const u = imageUrl(img, base);
+    if (!u || SKIP_IMG.test(u) || /\.(svg|gif)(\?|$)/i.test(u)) return false;
+    const w = parseInt(img.getAttribute('width'), 10), h = parseInt(img.getAttribute('height'), 10);
+    return !((w && w < 150) || (h && h < 150));
+  });
+  if (all.length < 2) return [];
+  const counts = new Map();
+  for (const img of all) {
+    let e = img.parentElement;
+    for (let k = 0; k < 3 && e; k++, e = e.parentElement) counts.set(e, (counts.get(e) || 0) + 1);
+  }
+  let box = null, best = 0;
+  counts.forEach((n, el) => { if (n > best) { best = n; box = el; } });
+  if (!box || best < 2) return [];
+  return [...new Set(all.filter((img) => box.contains(img)).map((img) => imageUrl(img, base)))];
+}
+
 /** Reads a fetched page into a chapter object, or null if no story text was found. */
 function parseChapter(html, url) {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const paras = paragraphs(doc);
-  if (!paras.length) return null;
+  const imgs = images(doc, url);
   const l = links(doc, url);
-  return { url, title: clean(doc.title), heading: heading(doc), paras, next: l.next, prev: l.prev };
+  // A page that's mostly pictures with little text is a manga / webtoon chapter
+  if (imgs.length >= 2 && paras.join('').length < 400) {
+    return { url, title: clean(doc.title), heading: heading(doc), paras: [], next: l.next, prev: l.prev, images: imgs };
+  }
+  if (!paras.length) return null;
+  return { url, title: clean(doc.title), heading: heading(doc), paras, next: l.next, prev: l.prev, images: [] };
 }
 
 module.exports = { parseChapter, chunks, clean };

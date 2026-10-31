@@ -12,7 +12,11 @@ data class Chapter(
     val paras: List<String>,
     val next: String?,
     val prev: String?,
-)
+    /** Page images, for manga / webtoon chapters (empty for novels). */
+    val images: List<String> = emptyList(),
+) {
+    val isManga: Boolean get() = images.isNotEmpty()
+}
 
 /**
  * Finds the story text and the next/previous chapter links in a page.
@@ -35,9 +39,61 @@ object Extractor {
     fun parse(html: String, url: String): Chapter? {
         val doc = Jsoup.parse(html, url)
         val paras = paragraphs(doc)
-        if (paras.isEmpty()) return null
+        val images = images(doc)
         val (next, prev) = links(doc, url)
+        // A page that's mostly pictures with little text is a manga / webtoon chapter
+        if (images.size >= 2 && paras.sumOf { it.length } < 400) {
+            return Chapter(url, clean(doc.title()), heading(doc), emptyList(), next, prev, images)
+        }
+        if (paras.isEmpty()) return null
         return Chapter(url, clean(doc.title()), heading(doc), paras, next, prev)
+    }
+
+    private val skipImg = Regex("logo|avatar|icon|banner|emoji|gravatar|sprite|/ads?/|advert|loading|placeholder|spinner|thumb", RegexOption.IGNORE_CASE)
+
+    /** The address of a picture, including lazy-loaded ones that keep it in data-src etc. */
+    private fun imageUrl(img: Element): String? {
+        for (a in listOf("data-src", "data-lazy-src", "data-original", "data-url", "data-cfsrc", "data-pagespeed-lazy-src")) {
+            val v = img.absUrl(a)
+            if (v.startsWith("http")) return v
+        }
+        val srcset = img.attr("data-srcset").ifEmpty { img.attr("srcset") }
+        if (srcset.isNotBlank()) {
+            val last = srcset.split(',').map { it.trim().substringBefore(' ') }.lastOrNull { it.isNotBlank() }
+            if (last != null) {
+                val abs = try { java.net.URL(java.net.URL(img.baseUri()), last).toString() } catch (_: Exception) { "" }
+                if (abs.startsWith("http")) return abs
+            }
+        }
+        val src = img.absUrl("src")
+        return if (src.startsWith("http")) src else null
+    }
+
+    /** The chapter's page images: the biggest group of pictures that sit together. */
+    fun images(doc: Document): List<String> {
+        val all = doc.select("img").filter { img ->
+            val u = imageUrl(img) ?: return@filter false
+            if (skipImg.containsMatchIn(u) || u.endsWith(".svg") || u.endsWith(".gif")) return@filter false
+            val w = img.attr("width").toIntOrNull()
+            val h = img.attr("height").toIntOrNull()
+            !((w != null && w < 150) || (h != null && h < 150))
+        }
+        if (all.size < 2) return emptyList()
+        // Count pictures per parent and grandparent; the busiest one holds the pages
+        val counts = ArrayList<Pair<Element, IntArray>>()
+        fun add(e: Element?) {
+            if (e == null) return
+            val g = counts.firstOrNull { it.first === e }
+            if (g == null) counts.add(e to intArrayOf(1)) else g.second[0]++
+        }
+        for (img in all) { add(img.parent()); add(img.parent()?.parent()); add(img.parent()?.parent()?.parent()) }
+        var best: Pair<Element, IntArray>? = null
+        for (c in counts) if (best == null || c.second[0] > best.second[0]) best = c
+        val box = best?.first ?: return emptyList()
+        if (best.second[0] < 2) return emptyList()
+        val out = LinkedHashSet<String>()
+        for (img in all) if (img.parents().any { it === box }) imageUrl(img)?.let { out.add(it) }
+        return out.toList()
     }
 
     private fun paragraphs(doc: Document): List<String> {
