@@ -549,8 +549,8 @@ function glideToBubble(i, my, fixedMs) {
     if (fixedMs) ms = fixedMs;
     else if (!pace || dist < 0) ms = 350;
     else if (dist < box.height * 0.5) ms = 600;
-    // Never spend more than 5 seconds on one stretch of artwork
-    else ms = Math.min(5000, (dist / box.height) * pace * 1000);
+    // A steady speed: the same time for every screen of artwork, however long the gap
+    else ms = Math.min(120000, (dist / box.height) * pace * 1000);
     const t0 = performance.now();
     text.style.scrollBehavior = 'auto';
     const ease = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);

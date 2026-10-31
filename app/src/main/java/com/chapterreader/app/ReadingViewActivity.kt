@@ -519,7 +519,7 @@ function setCur(i,ms){
   if(Date.now()-lastTouch>5000)glide(targetY(o),ms);
   // Tell the app how long the glide to the next bubble will take, so it can wait for it
   var n=bub(i+1);
-  if(n){var gap=targetY(n)-targetY(o);var t=!pace?0:(gap>window.innerHeight*0.5?Math.min(5000,gap/window.innerHeight*pace*1000):(gap>4?400:0));CRBridge.glideTime(i+1,Math.round(t));}
+  if(n){var gap=targetY(n)-targetY(o);var t=!pace?0:(gap>window.innerHeight*0.5?Math.min(120000,gap/window.innerHeight*pace*1000):(gap>4?400:0));CRBridge.glideTime(i+1,Math.round(t));}
 }
 function follow(){lastTouch=0;var o=bub(cur);if(o)glide(targetY(o),500);}
 ['touchstart','touchmove'].forEach(function(e){addEventListener(e,function(){lastTouch=Date.now();CRBridge.touched();},{passive:true});});
