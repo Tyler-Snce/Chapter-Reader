@@ -39,6 +39,16 @@ async function toLitterbox(file) {
   return text;
 }
 
+/** Uploads to Gofile (free, no size limit). Links can be removed if nobody opens them for a long time. */
+async function toGofile(file) {
+  const form = new FormData();
+  form.append('file', await fileBlob(file), path.basename(file));
+  const r = await fetch('https://upload.gofile.io/uploadfile', { method: 'POST', body: form });
+  const j = await r.json().catch(() => null);
+  if (!r.ok || !j || j.status !== 'ok' || !j.data || !j.data.downloadPage) throw new Error('Gofile said: ' + (j ? JSON.stringify(j).slice(0, 120) : r.status));
+  return j.data.downloadPage;
+}
+
 function validWebhook(url) {
   return /^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+/.test(String(url || '').trim());
 }
@@ -66,4 +76,4 @@ async function toDiscord(webhook, { content = '', file = null, embed = null } = 
   return msg && msg.attachments && msg.attachments[0] ? msg.attachments[0].url : null;
 }
 
-module.exports = { toCatbox, toLitterbox, toDiscord, validWebhook, CATBOX_LIMIT, DISCORD_LIMIT, LITTERBOX_LIMIT };
+module.exports = { toCatbox, toLitterbox, toGofile, toDiscord, validWebhook, CATBOX_LIMIT, DISCORD_LIMIT, LITTERBOX_LIMIT };

@@ -245,8 +245,8 @@ async function captured(file, kind, flagId) {
 }
 
 /**
- * Catbox takes files up to 200 MB. Bigger videos get a smaller copy if it can still look good;
- * otherwise they go to Litterbox (up to 1 GB, the link lasts 3 days).
+ * Catbox takes files up to 200 MB. Bigger videos get a smaller copy if it can still look good
+ * (up to about 8 minutes); longer ones go to Gofile, which has no size limit.
  */
 async function catboxFor(item) {
   delete item.expires;
@@ -263,12 +263,9 @@ async function catboxFor(item) {
     item.uploadedCopy = small;
     return upload.toCatbox(small);
   }
-  if (item.size <= upload.LITTERBOX_LIMIT) {
-    send('toast', 'Too long for a good-looking Catbox copy \u2013 uploading to Litterbox instead (the link lasts 3 days)');
-    item.expires = Date.now() + 72 * 3600 * 1000;
-    return upload.toLitterbox(item.file);
-  }
-  throw new Error('the video is over 1 GB \u2013 trim it in the editor, or share the file itself (Copy file / Save as)');
+  // Too long to shrink nicely: Gofile takes any size
+  send('toast', 'Too big for Catbox \u2013 uploading to Gofile instead (no size limit)');
+  return upload.toGofile(item.file);
 }
 
 async function doUpload(item) {
@@ -281,15 +278,10 @@ async function doUpload(item) {
     if (to === 'catbox' || to === 'both') link = await catboxFor(item);
     if (to === 'discord' || to === 'both') {
       let file = item.file;
-      // Too big for Discord? Post the Catbox link, or make a smaller copy if only Discord is used
+      // Too big to attach in Discord (10 MB)? Upload it and post the link instead
       if (item.size > upload.DISCORD_LIMIT) {
-        if (link) file = null;
-        else if (item.kind !== 'screenshot') {
-          send('toast', 'Making a smaller copy for Discord…');
-          const small = item.file.replace(/(\.\w+)$/, '-discord$1');
-          await ff.shrink(item.file, small, upload.DISCORD_LIMIT * 0.95);
-          file = small;
-        }
+        if (!link) link = await catboxFor(item);
+        file = null;
       }
       const flag = item.flagId ? flags.find((f) => f.id === item.flagId) : null;
       const text = (flag ? '**' + (flag.player || '?') + '**: ' + flag.message + ' (' + flag.reasons.join(', ') + ')\n' : label + ' from Staff Toolkit\n') + (link || '');

@@ -65,6 +65,18 @@ object Uploader {
         return link
     }
 
+    /** Uploads to Gofile (free, no size limit) and returns the link. */
+    fun gofile(ctx: Context, uri: Uri, name: String): String {
+        val (code, body) = multipart(ctx, "https://upload.gofile.io/uploadfile", listOf(Part("file", uri = uri, fileName = name, type = mime(name))))
+        val link = try { JSONObject(body).optJSONObject("data")?.optString("downloadPage") } catch (_: Exception) { null }
+        if (code !in 200..299 || link.isNullOrEmpty()) throw Exception("Gofile said: ${body.take(120)}")
+        return link
+    }
+
+    /** Catbox for files up to 200 MB, Gofile for bigger ones. */
+    fun linkFor(ctx: Context, uri: Uri, name: String, size: Long): String =
+        if (size <= CATBOX_LIMIT) catbox(ctx, uri, name, size) else gofile(ctx, uri, name)
+
     fun validWebhook(url: String?) =
         url != null && Regex("^https://(?:ptb\\.|canary\\.)?discord(?:app)?\\.com/api/webhooks/\\d+/[\\w-]+").containsMatchIn(url.trim())
 
@@ -96,13 +108,13 @@ object Uploader {
         val to = p.getString("uploadTo", "catbox") ?: "catbox"
         val uri = Uri.parse(cap.uri)
         var link: String? = null
-        if (to == "catbox" || to == "both" || to == "none") link = catbox(ctx, uri, cap.name, cap.size)
+        if (to == "catbox" || to == "both" || to == "none") link = linkFor(ctx, uri, cap.name, cap.size)
         if (to == "discord" || to == "both") {
             val hook = p.getString("webhook", "") ?: ""
             val label = when (cap.kind) { "screenshot" -> "Screenshot"; "clip" -> "Clip"; else -> "Recording" }
             val head = if (flag != null) "**${flag.player ?: "?"}**: ${flag.message} (${flag.reasons.joinToString()})\n" else "$label from Staff Toolkit\n"
             val tooBig = cap.size > DISCORD_LIMIT
-            if (tooBig && link == null) link = catbox(ctx, uri, cap.name, cap.size)   // too big for Discord: post a link instead
+            if (tooBig && link == null) link = linkFor(ctx, uri, cap.name, cap.size)   // too big for Discord: post a link instead
             val att = discord(ctx, hook, head + (link ?: ""), if (tooBig) null else uri, cap.name, cap.size)
             link = link ?: att
         }
