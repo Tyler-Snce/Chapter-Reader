@@ -88,7 +88,7 @@ jobs:
             --latest=false
 
       - name: Save log for troubleshooting
-        if: failure()
+        if: always()
         run: |
           mkdir -p /tmp/logs && cd /tmp/logs
           cp "$RUNNER_TEMP/build.log" build.log 2>/dev/null || echo "no log" > build.log
