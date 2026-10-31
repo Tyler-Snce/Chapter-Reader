@@ -182,11 +182,18 @@ async function speak() {
   if (st.idx >= st.items.length) { finished(); return; }
   const i = st.idx;
   const item = st.items[i];
+  const newBubble = isManga() && item.p !== current;
   highlight(item.p);
   push();
+  const clipJob = clip(i);
+  // Manga: glide down through the artwork to the next speech bubble before reading it
+  if (newBubble) {
+    await glideToBubble(item.p, my);
+    if (my !== token || !st.playing) return;
+  }
   let c;
   try {
-    c = await clip(i);
+    c = await clipJob;
   } catch (e) {
     if (my !== token) return;
     pause();
@@ -471,12 +478,45 @@ function highlightBubble(i) {
   const o = text.querySelector('.bub[data-i="' + i + '"]');
   if (o) {
     o.classList.add('cur');
-    if (following()) {
-      const r = o.getBoundingClientRect(), box = text.getBoundingClientRect();
-      text.scrollTop += r.top - (box.top + box.height / 3);
-    }
+    // While reading, speak() glides here; otherwise (paused, tapped, Follow) move there quickly
+    if (following() && !st.playing) glideToBubble(i, token, 400);
   }
   saveProgress();
+}
+
+/**
+ * Scrolls smoothly so speech bubble [i] sits a third of the way down the view.
+ * Long stretches of artwork scroll at the chosen "artwork pace" (seconds per screen),
+ * so there's time to look at the pictures. Resolves when the scroll is done.
+ */
+function glideToBubble(i, my, fixedMs) {
+  return new Promise((resolve) => {
+    const o = text.querySelector('.bub[data-i="' + i + '"]');
+    if (!o || !following()) { resolve(); return; }
+    const box = text.getBoundingClientRect();
+    const start = text.scrollTop;
+    const target = start + o.getBoundingClientRect().top - (box.top + box.height / 3);
+    const dist = target - start;
+    if (Math.abs(dist) < 4) { resolve(); return; }
+    const pace = Number(settings.artPace ?? 2.5);
+    let ms;
+    if (fixedMs) ms = fixedMs;
+    else if (!pace || dist < 0) ms = 350;
+    else if (dist < box.height * 0.5) ms = 600;
+    else ms = Math.min(20000, (dist / box.height) * pace * 1000);
+    const t0 = performance.now();
+    text.style.scrollBehavior = 'auto';
+    const ease = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+    const step = (now) => {
+      // Stop if playback was paused/changed, or you started scrolling yourself
+      if (my !== token || !following()) { text.style.scrollBehavior = ''; resolve(); return; }
+      const k = Math.min(1, (now - t0) / ms);
+      text.scrollTop = start + dist * (pace && ms > 1000 ? k : ease(k));
+      if (k < 1) requestAnimationFrame(step);
+      else { text.style.scrollBehavior = ''; resolve(); }
+    };
+    requestAnimationFrame(step);
+  });
 }
 
 // ---------- view ----------
@@ -614,7 +654,7 @@ $('smaller').addEventListener('click', () => setTextSize(settings.textSize - 1))
 $('bigger').addEventListener('click', () => setTextSize(settings.textSize + 1));
 $('follow').addEventListener('click', () => {
   lastUserScroll = 0;
-  if (isManga()) { highlightBubble(current); return; }
+  if (isManga()) { glideToBubble(current, token, 500); return; }
   const el = paraEls[current];
   if (el) el.scrollIntoView({ block: 'center' });
 });
@@ -631,6 +671,10 @@ $('edgeVoice').addEventListener('change', (e) => {
   ipcRenderer.send('settings-set', { edgeVoice: settings.edgeVoice });
   resetClips();
   if (st.playing && settings.engine === 'edge') speak();
+});
+$('artPace').addEventListener('change', (e) => {
+  settings.artPace = Number(e.target.value);
+  ipcRenderer.send('settings-set', { artPace: settings.artPace });
 });
 $('auto').addEventListener('change', (e) => {
   settings.auto = e.target.checked;
@@ -663,6 +707,7 @@ ipcRenderer.invoke('settings-get').then((s) => {
   $('edgeVoice').value = settings.edgeVoice;
   $('auto').checked = settings.auto !== false;
   document.documentElement.style.setProperty('--text-size', (settings.textSize || 19) + 'px');
+  $('artPace').value = String(settings.artPace ?? 2.5);
   $('syncUser').value = settings.syncUser || '';
   $('syncPin').value = settings.syncPin || '';
   if (!syncOn()) $('syncRow').style.display = 'none';

@@ -47,6 +47,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         fun onWord(para: Int, start: Int, end: Int) {}
         /** New manga pages or speech bubbles are ready to show. */
         fun onMangaUpdate() {}
+        /** Manga: how long to scroll through artwork before reading bubble [bubble] (ms). */
+        fun artPause(bubble: Int): Long = 0L
     }
 
     private data class Item(val p: Int, val text: String, val offset: Int)
@@ -732,10 +734,17 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val oldP = items.getOrNull(idx)?.p
         idx = i
         mp.setOnCompletionListener { done -> onPlayerDone(done) }
-        mp.start()
         errors = 0
         val p = items[i].p
-        if (p >= 0 && p != oldP) paraChanged(p)
+        var wait = 0L
+        if (p >= 0 && p != oldP) {
+            // Manga: let the view glide down through the artwork before reading the next bubble
+            if (isManga) wait = viewListener?.artPause(p) ?: 0L
+            paraChanged(p)
+        }
+        if (wait > 0) {
+            handler.postDelayed({ if (player === mp && playing) try { mp.start() } catch (_: Exception) {} }, wait)
+        } else mp.start()
         handler.removeCallbacks(positionTicker)
         handler.post(positionTicker)
         if (files.containsKey(i + 1)) prepareNext(i + 1)

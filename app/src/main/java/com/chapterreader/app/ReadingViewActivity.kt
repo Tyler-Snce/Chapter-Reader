@@ -43,6 +43,8 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
     private lateinit var caption: TextView
     private var mangaFor: String? = null
     private var mangaReady = false
+    private val glideTimes = java.util.concurrent.ConcurrentHashMap<Int, Int>()
+    @Volatile private var mangaTouch = 0L
 
     private val paraViews = ArrayList<TextView>()
     private var builtFor: String? = null
@@ -282,12 +284,19 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
     inner class MangaBridge {
         @JavascriptInterface
         fun tap(i: Int) { runOnUiThread { svc()?.startAtPara(i) } }
+
+        /** How long gliding to bubble [i] will take, worked out by the page. */
+        @JavascriptInterface
+        fun glideTime(i: Int, ms: Int) { glideTimes[i] = ms }
+
+        @JavascriptInterface
+        fun touched() { mangaTouch = SystemClock.uptimeMillis() }
     }
 
     private fun highlight(i: Int, smooth: Boolean) {
         if (svc()?.isManga == true) {
             current = i
-            if (mangaReady) manga.evaluateJavascript("setCur($i,$smooth)", null)
+            if (mangaReady) manga.evaluateJavascript("setCur($i,${glideTimes[i] ?: if (smooth) 400 else 0})", null)
             caption.text = svc()?.bubbleText(i) ?: ""
             return
         }
@@ -365,6 +374,12 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
     }
 
     override fun onChapterChanged(url: String) = rebuild()
+
+    override fun artPause(bubble: Int): Long {
+        if (svc()?.isManga != true || !mangaReady) return 0L
+        if (SystemClock.uptimeMillis() - mangaTouch < 5000) return 0L
+        return (glideTimes[bubble] ?: 0).toLong()
+    }
 
     override fun onMangaUpdate() {
         pushManga()
@@ -446,15 +461,36 @@ function setData(p,b,c){
     o.style.left=(q[1]*100)+'%';o.style.top=(q[2]*100)+'%';o.style.width=(q[3]*100)+'%';o.style.height=(q[4]*100)+'%';
     o.dataset.i=j;o.onclick=function(){CRBridge.tap(+this.dataset.i)};d.appendChild(o);}
   nb=b.length;
-  if(c!==cur)setCur(c,false);
+  if(c!==cur)setCur(c,0);
 }
-function setCur(i,smooth){
+var pace=2.5,anim=0;
+function bub(i){return document.querySelector('.b[data-i="'+i+'"]');}
+function targetY(o){return window.scrollY+o.getBoundingClientRect().top-window.innerHeight/3;}
+function glide(target,ms){
+  cancelAnimationFrame(anim);
+  var start=window.scrollY,d=target-start;
+  if(Math.abs(d)<4)return;
+  if(!ms){window.scrollTo(0,target);return;}
+  var t0=performance.now();
+  function step(now){
+    if(Date.now()-lastTouch<5000)return;
+    var k=Math.min(1,(now-t0)/ms);
+    var e=ms>1000?k:(k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2);
+    window.scrollTo(0,start+d*e);
+    if(k<1)anim=requestAnimationFrame(step);
+  }
+  anim=requestAnimationFrame(step);
+}
+function setCur(i,ms){
   var old=document.querySelector('.b.cur');if(old)old.classList.remove('cur');
-  cur=i;var o=document.querySelector('.b[data-i="'+i+'"]');if(!o)return;o.classList.add('cur');
-  if(Date.now()-lastTouch>5000){var r=o.getBoundingClientRect();window.scrollTo({top:window.scrollY+r.top-window.innerHeight/3,behavior:smooth?'smooth':'auto'});}
+  cur=i;var o=bub(i);if(!o)return;o.classList.add('cur');
+  if(Date.now()-lastTouch>5000)glide(targetY(o),ms);
+  // Tell the app how long the glide to the next bubble will take, so it can wait for it
+  var n=bub(i+1);
+  if(n){var gap=targetY(n)-targetY(o);var t=gap>window.innerHeight*0.5?Math.min(20000,gap/window.innerHeight*pace*1000):(gap>4?600:0);CRBridge.glideTime(i+1,Math.round(t));}
 }
-function follow(){lastTouch=0;setCur(cur,true);}
-['touchstart','touchmove'].forEach(function(e){addEventListener(e,function(){lastTouch=Date.now();},{passive:true});});
+function follow(){lastTouch=0;var o=bub(cur);if(o)glide(targetY(o),500);}
+['touchstart','touchmove'].forEach(function(e){addEventListener(e,function(){lastTouch=Date.now();CRBridge.touched();},{passive:true});});
 </script></body></html>
 """
         private val BG = 0xFF121016.toInt()
