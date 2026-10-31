@@ -59,10 +59,7 @@
       "createDesktopShortcut": true,
       "shortcutName": "Chapter Reader"
     },
-    "asarUnpack": [
-      "node_modules/tesseract.js/**",
-      "node_modules/tesseract.js-core/**"
-    ]
+    "asar": false
   },
   "author": "Tyler-Snce"
 }
