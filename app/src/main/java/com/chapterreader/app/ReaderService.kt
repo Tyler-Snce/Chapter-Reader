@@ -438,14 +438,21 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                 }
             }
             downloads.shutdown()
+            var carry = emptyList<MangaOcr.Carry>()
             ch.images.forEachIndexed { i, _ ->
                 if (myGen != mangaGen) { downloads.shutdownNow(); return@execute }
                 val f = File(dir, "$myGen-$i")
                 val ok = try { pages[i].get() } catch (_: Exception) { false }
+                // The top of the next picture is read too, in case the site cut through a line of text
+                val nextOk = i + 1 < pages.size && (try { pages[i + 1].get() } catch (_: Exception) { false })
                 if (myGen != mangaGen) { downloads.shutdownNow(); return@execute }
                 val found = if (ok) {
-                    try { reader.bubbles(f, i, learnedMarks) { learnMark(it) } } catch (_: Throwable) { emptyList() }
-                } else emptyList()
+                    try {
+                        val r = reader.bubbles(f, i, if (nextOk) File(dir, "$myGen-${i + 1}") else null, carry, learnedMarks) { learnMark(it) }
+                        carry = r.carry
+                        r.bubbles
+                    } catch (_: Throwable) { carry = emptyList(); emptyList() }
+                } else { carry = emptyList(); emptyList() }
                 handler.post { if (myGen == mangaGen) addBubbles(found) }
             }
             handler.post {

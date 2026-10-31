@@ -3,7 +3,11 @@ package com.chapterreader.app
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -73,25 +77,55 @@ class MangaOcr(private val userAgent: String) {
 
     /** Reads the text in one page image, in reading order (top to bottom, left to right). */
     @Suppress("DEPRECATION")
-    fun bubbles(file: File, imgIndex: Int, marks: Set<String> = emptySet(), onMark: (String) -> Unit = {}): List<SpeechBubble> {
+    /** Text read across the join into the next picture; position in fractions of the picture width. */
+    class Carry(val l: Float, val t: Float, val r: Float, val b: Float)
+
+    class PageText(val bubbles: List<SpeechBubble>, val carry: List<Carry>)
+
+    /**
+     * Reads the text in one page image, in reading order (top to bottom, left to right).
+     * The site cuts the strip into pictures, sometimes straight through a line of text, so the
+     * top of the [next] picture is attached underneath; [carry] is what the previous page
+     * already read from the top of this one.
+     */
+    fun bubbles(
+        file: File, imgIndex: Int, next: File? = null, carry: List<Carry> = emptyList(),
+        marks: Set<String> = emptySet(), onMark: (String) -> Unit = {},
+    ): PageText {
+        val empty = PageText(emptyList(), emptyList())
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
         val w = bounds.outWidth
         val h = bounds.outHeight
-        if (w <= 0 || h <= 0) return emptyList()
+        if (w <= 0 || h <= 0) return empty
 
         val decoder = try { BitmapRegionDecoder.newInstance(file.path, false) } catch (_: Exception) { null }
-            ?: return emptyList()
+            ?: return empty
+        var nextDecoder: BitmapRegionDecoder? = null
+        var nw = 0
+        var band = 0
+        if (next != null) {
+            val nb = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(next.path, nb)
+            if (nb.outWidth > 0 && nb.outHeight > 0) {
+                nextDecoder = try { BitmapRegionDecoder.newInstance(next.path, false) } catch (_: Exception) { null }
+                if (nextDecoder != null) {
+                    nw = nb.outWidth
+                    band = min((nb.outHeight.toLong() * w / nw).toInt(), w * 6 / 10)
+                }
+            }
+        }
+        val fullH = h + band
         val sample = if (w > 1600) 2 else 1
         // Long webtoon strips are read in overlapping slices so small text stays readable
-        val tileH = min(h, w * 2)
+        val tileH = min(fullH, w * 2)
         val overlap = min(tileH / 4, w / 3)
         val found = ArrayList<Box>()
         var top = 0
         try {
-            while (top < h) {
-                val bottom = min(h, top + tileH)
-                val raw = decoder.decodeRegion(Rect(0, top, w, bottom), BitmapFactory.Options().apply { inSampleSize = sample })
+            while (top < fullH) {
+                val bottom = min(fullH, top + tileH)
+                val raw = stitch(decoder, w, h, nextDecoder, nw, top, bottom, sample)
                 if (raw != null) {
                     // Small pictures are enlarged first so small lettering can still be read
                     val up = if (raw.width < 1000) min(2f, 1200f / raw.width) else 1f
@@ -110,11 +144,25 @@ class MangaOcr(private val userAgent: String) {
                         raw.recycle()
                     }
                 }
-                if (bottom >= h) break
+                if (bottom >= fullH) break
                 top = bottom - overlap
             }
         } finally {
             decoder.recycle()
+            nextDecoder?.recycle()
+        }
+
+        // Leave out text the previous page already read across the join
+        if (carry.isNotEmpty()) {
+            val skip = carry.map { Box((it.l * w).toInt(), (it.t * w).toInt(), (it.r * w).toInt(), (it.b * w).toInt(), "", 1) }
+            found.removeAll { f ->
+                val area = max(1, (f.r - f.l) * (f.b - f.t))
+                skip.any { c ->
+                    val iw = min(f.r, c.r) - max(f.l, c.l)
+                    val ih = min(f.b, c.b) - max(f.t, c.t)
+                    iw > 0 && ih > 0 && iw.toLong() * ih > area * 0.3
+                }
+            }
         }
 
         // Remove text seen twice where slices overlap
@@ -147,10 +195,46 @@ class MangaOcr(private val userAgent: String) {
             val sameRow = min(a.b, c.b) - max(a.t, c.t) > min(a.b - a.t, c.b - c.t) * 0.4
             if (sameRow) a.l.compareTo(c.l) else a.t.compareTo(c.t)
         })
-        return ordered.mapNotNull { b ->
+        // Bubbles starting in the attached part belong to the next picture and are read with it
+        val mine = ordered.filter { it.t < h }
+        val nextCarry = mine.filter { it.b > h }.map {
+            Carry(it.l.toFloat() / w, (it.t - h).toFloat() / w, it.r.toFloat() / w, (it.b - h).toFloat() / w)
+        }
+        val list = mine.mapNotNull { b ->
             val text = tidy(b.text) ?: return@mapNotNull null
             SpeechBubble(imgIndex, b.l.toFloat() / w, b.t.toFloat() / h, (b.r - b.l).toFloat() / w, (b.b - b.t).toFloat() / h, text)
         }
+        return PageText(list, nextCarry)
+    }
+
+    /** Rows [top, bottom) of this picture with the next picture (scaled to the same width) joined below. */
+    private fun stitch(
+        decoder: BitmapRegionDecoder, w: Int, h: Int, next: BitmapRegionDecoder?, nw: Int,
+        top: Int, bottom: Int, sample: Int,
+    ): Bitmap? {
+        if (bottom <= h || next == null) {
+            return decoder.decodeRegion(Rect(0, top, w, min(bottom, h)), BitmapFactory.Options().apply { inSampleSize = sample })
+        }
+        val out = Bitmap.createBitmap(max(1, w / sample), max(1, (bottom - top) / sample), Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        canvas.drawColor(Color.WHITE)
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        if (top < h) {
+            decoder.decodeRegion(Rect(0, top, w, h), BitmapFactory.Options().apply { inSampleSize = sample })?.let {
+                canvas.drawBitmap(it, null, RectF(0f, 0f, out.width.toFloat(), (h - top).toFloat() / sample), paint)
+                it.recycle()
+            }
+        }
+        val from = max(top, h)
+        val k = nw.toFloat() / w
+        val srcTop = ((from - h) * k).toInt()
+        val srcBottom = max(srcTop + 1, ((bottom - h) * k).toInt())
+        val nSample = max(1, (sample * k).toInt())
+        next.decodeRegion(Rect(0, srcTop, nw, srcBottom), BitmapFactory.Options().apply { inSampleSize = nSample })?.let {
+            canvas.drawBitmap(it, null, RectF(0f, (from - top).toFloat() / sample, out.width.toFloat(), (bottom - top).toFloat() / sample), paint)
+            it.recycle()
+        }
+        return out
     }
 
     private class Seg(val l: Int, val t: Int, val r: Int, val b: Int, val text: String, val h: Int)

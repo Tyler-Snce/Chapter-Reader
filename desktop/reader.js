@@ -337,16 +337,26 @@ async function startManga(ch) {
   for (let k = 0; k < 4; k++) downloadOne();
 
   let ocrError = '';
+  let carry = [];   // text already read across the join into the next picture
+  const pageBlob = async (i) => {
+    while (!pages[i] && gen === mangaGen) await new Promise((r) => setTimeout(r, 100));
+    return pages[i];
+  };
   for (let i = 0; i < ch.images.length; i++) {
     if (gen !== mangaGen) return;
-    while (!pages[i] && gen === mangaGen) await new Promise((r) => setTimeout(r, 100));
-    const blob = await pages[i];
+    const blob = await pageBlob(i);
     if (gen !== mangaGen) return;
-    if (!blob) continue;
+    if (!blob) { carry = []; continue; }
+    // The site cuts the strip into pictures, sometimes straight through a line of text,
+    // so each picture is read with the top of the next one attached
+    const nextBlob = i + 1 < ch.images.length ? await pageBlob(i + 1) : null;
+    if (gen !== mangaGen) return;
     let found = [];
     try {
-      found = await readPage(blob, i);
+      const r = await readPage(blob, i, nextBlob, carry);
+      found = r.bubbles; carry = r.carry;
     } catch (e) {
+      carry = [];
       const msg = String(e.message || e).replace(/^Error invoking remote method '\w+': (Error: )?/, '');
       console.warn('OCR failed', msg);
       if (msg !== ocrError) { ocrError = msg; setStatus('Text recognition problem: ' + msg); }
@@ -363,11 +373,20 @@ async function startManga(ch) {
   push();
 }
 
-/** Reads the text in one page, slicing tall webtoon strips so small text stays readable. */
-async function readPage(blob, imgIndex) {
+/**
+ * Reads the text in one page, slicing tall webtoon strips so small text stays readable.
+ * The top of the next picture is attached underneath, so text cut by the join is read whole;
+ * [carry] lists what the previous page already read from the top of this one.
+ */
+async function readPage(blob, imgIndex, nextBlob, carry) {
   const bmp = await createImageBitmap(blob);
-  const W = bmp.width, H = bmp.height;
-  // Windows text recognition handles pictures up to about 2600px on a side
+  const W = bmp.width, H0 = bmp.height;
+  let nb = null, bandH = 0;
+  if (nextBlob) {
+    try { nb = await createImageBitmap(nextBlob); bandH = Math.min(Math.round(nb.height * W / nb.width), Math.round(W * 0.6)); } catch (_) { nb = null; }
+  }
+  const H = H0 + bandH;
+  const skip = (carry || []).map((c) => ({ l: c.l * W, r: c.r * W, t: c.t * W, b: c.b * W }));
   // Small pictures are enlarged (up to 2x) so small lettering can still be read
   const scale = Math.min(2, 1400 / W);
   const tileH = Math.min(H, Math.floor(2400 / scale));
@@ -378,7 +397,16 @@ async function readPage(blob, imgIndex) {
     const cw = Math.round(W * scale), ch = Math.round((bottom - top) * scale);
     const canvas = new OffscreenCanvas(cw, ch);
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(bmp, 0, top, W, bottom - top, 0, 0, cw, ch);
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
+    if (top < H0) {
+      const end = Math.min(bottom, H0);
+      ctx.drawImage(bmp, 0, top, W, end - top, 0, 0, cw, Math.round((end - top) * scale));
+    }
+    if (nb && bottom > H0) {
+      const from = Math.max(top, H0), k = nb.width / W;
+      ctx.drawImage(nb, 0, (from - H0) * k, nb.width, (bottom - from) * k,
+        0, Math.round((from - top) * scale), cw, Math.round((bottom - from) * scale));
+    }
     const png = await canvas.convertToBlob({ type: 'image/png' });
     const res = await ipcRenderer.invoke('ocr', new Uint8Array(await png.arrayBuffer()));
     for (const line of res) for (const b of lineSegments(line)) {
@@ -388,6 +416,18 @@ async function readPage(blob, imgIndex) {
     top = bottom - overlap;
   }
   bmp.close();
+  if (nb) nb.close();
+  // Leave out text the previous page already read across the join
+  if (skip.length) {
+    for (let i = found.length - 1; i >= 0; i--) {
+      const f = found[i], area = Math.max(1, (f.r - f.l) * (f.b - f.t));
+      const hit = skip.some((c) => {
+        const iw = Math.min(f.r, c.r) - Math.max(f.l, c.l), ih = Math.min(f.b, c.b) - Math.max(f.t, c.t);
+        return iw > 0 && ih > 0 && iw * ih > area * 0.3;
+      });
+      if (hit) found.splice(i, 1);
+    }
+  }
   // Remove text seen twice where slices overlap
   const share = (a, b) => {
     const iw = Math.min(a.r, b.r) - Math.max(a.l, b.l), ih = Math.min(a.b, b.b) - Math.max(a.t, b.t);
@@ -415,10 +455,15 @@ async function readPage(blob, imgIndex) {
     const sameRow = Math.min(a.b, c.b) - Math.max(a.t, c.t) > Math.min(a.b - a.t, c.b - c.t) * 0.4;
     return sameRow ? a.l - c.l : a.t - c.t;
   });
-  return unique.map((b) => {
+  // Bubbles starting in the attached part belong to the next picture and are read with it
+  const mine = unique.filter((b) => b.t < H0);
+  const nextCarry = mine.filter((b) => b.b > H0)
+    .map((b) => ({ l: b.l / W, r: b.r / W, t: (b.t - H0) / W, b: (b.b - H0) / W }));
+  const bubbles = mine.map((b) => {
     const t = tidy(b.text);
-    return t ? { img: imgIndex, x: b.l / W, y: b.t / H, w: (b.r - b.l) / W, h: (b.b - b.t) / H, text: t } : null;
+    return t ? { img: imgIndex, x: b.l / W, y: b.t / H0, w: (b.r - b.l) / W, h: (b.b - b.t) / H0, text: t } : null;
   }).filter(Boolean);
+  return { bubbles, carry: nextCarry };
 }
 
 // A word that is (part of) a site stamp such as "I ♥ MANGA"
