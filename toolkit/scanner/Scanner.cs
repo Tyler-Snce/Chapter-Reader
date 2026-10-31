@@ -262,14 +262,23 @@ namespace StaffToolkitScan
                 var signer = Signer(path);
                 var lp = path.ToLowerInvariant();
                 var cheat = CheatMatch(Path.GetFileName(path));
+                // Minecraft's own libraries (graphics, sound, input...) are unpacked into Temp or game folders each launch
+                if (cheat == null && (KnownGameLibs.IsMatch(Path.GetFileName(path)) || GameLibDirs.IsMatch(lp)))
+                { gameLibs.Add(Short(path)); continue; }
                 var risky = lp.Contains(@"\temp\") || lp.Contains(@"\downloads\") || lp.Contains(@"\desktop\") || lp.StartsWith(AppData.ToLowerInvariant()) || lp.StartsWith(LocalAppData.ToLowerInvariant());
                 if (cheat != null) { Add(Level.Serious, "Game", "Cheat file loaded into " + g.Client + ": " + Path.GetFileName(path), Short(path)); odd++; }
                 else if (signer == null && risky) { Add(Level.Serious, "Game", "Unsigned DLL from a user folder loaded into " + g.Client + ": " + Path.GetFileName(path), Short(path) + "\nModified " + Ago(File.GetLastWriteTime(path))); odd++; }
                 else if (signer == null) { Add(Level.Suspicious, "Game", "Unsigned DLL loaded into " + g.Client + ": " + Path.GetFileName(path), Short(path)); odd++; }
                 else if (!knownVendors.Any(v => signer.ToLowerInvariant().Contains(v))) Add(Level.Info, "Game", "DLL from " + signer + " loaded into " + g.Client + ": " + Path.GetFileName(path), Short(path));
             }
+            if (gameLibs.Count > 0) Add(Level.Info, "Game", gameLibs.Count + " of Minecraft's own libraries loaded into " + g.Client + " (normal)", string.Join("\n", gameLibs.Take(40)));
+            gameLibs.Clear();
             if (odd == 0) Add(Level.Info, "Game", "Nothing unusual loaded into " + g.Client);
         }
+
+        readonly List<string> gameLibs = new List<string>();
+        static readonly Regex KnownGameLibs = new Regex(@"^(lwjgl.*|glfw.*|openal.*|jemalloc.*|jinput.*|sapiwrapper.*|jnidispatch.*|jna.*|discord[-_].*|lunar.*|ichor.*|sqlite.*|libwinpthread.*|zstd.*|lz4.*|rocksdb.*|tinyfd.*|nfd.*|stb.*|imgui.*|freetype.*|harfbuzz.*|opus.*|shaderc.*|steam_api.*|xinput.*|bgfx.*|renderdoc.*|natives.*|jcef.*|libcef.*|chrome_elf.*|d3dcompiler.*|vulkan.*|libegl.*|libglesv2.*|ffmpeg.*|av(codec|format|util).*|swscale.*|swresample.*|libvlc.*|nvngx.*|amd_ags.*)\.dll$", RegexOptions.IgnoreCase);
+        static readonly Regex GameLibDirs = new Regex(@"\\(natives?|lwjgl[^\\]*|\.lunarclient|\.minecraft\\bin|\.minecraft\\versions|\.feather|feather|badlion[^\\]*|\.cache\\(lunar|feather)|jna[^\\]*|ichor[^\\]*)\\", RegexOptions.IgnoreCase);
 
         static string Signer(string file)
         {
