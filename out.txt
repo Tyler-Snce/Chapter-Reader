@@ -1,0 +1,37 @@
+== version
+ffmpeg version 6.0-essentials_build-www.gyan.dev Copyright (c) 2000-2023 the FFmpeg developers
+built with gcc 12.2.0 (Rev10, Built by MSYS2 project)
+configuration: --enable-gpl --enable-version3 --enable-static --disable-w32threads --disable-autodetect --enable-fontconfig --enable-iconv --enable-gnutls --enable-libxml2 --enable-gmp --enable-bzlib --enable-lzma --enable-zlib --enable-libsrt --enable-libssh --enable-libzmq --enable-avisynth --enable-sdl2 --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxvid --enable-libaom --enable-libopenjpeg --enable-libvpx --enable-mediafoundation --enable-libass --enable-libfreetype --enable-libfribidi --enable-libvidstab --enable-libvmaf --enable-libzimg --enable-amf --enable-cuda-llvm --enable-cuvid --enable-ffnvcodec --enable-nvdec --enable-nvenc --enable-d3d11va --enable-dxva2 --enable-libvpl --enable-libgme --enable-libopenmpt --enable-libopencore-amrwb --enable-libmp3lame --enable-libtheora --enable-libvo-amrwbenc --enable-libgsm --enable-libopencore-amrnb --enable-libopus --enable-libspeex --enable-libvorbis --enable-librubberband
+== ddagrab
+ ... hwdownload        V->V       Download a hardware frame to a normal frame
+ ... ddagrab           |->V       Grab Windows Desktop images using Desktop Duplication API
+== gdigrab
+ D  dshow           DirectShow capture
+ D  gdigrab         GDI API Windows frame grabber
+== encoders
+ V....D av1_nvenc            NVIDIA NVENC av1 encoder (codec av1)
+ V..... av1_qsv              AV1 (Intel Quick Sync Video acceleration) (codec av1)
+ V....D av1_amf              AMD AMF AV1 encoder (codec av1)
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ V....D libx264rgb           libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 RGB (codec h264)
+ V....D h264_amf             AMD AMF H.264 Encoder (codec h264)
+ V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)
+ V..... h264_qsv             H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (Intel Quick Sync Video acceleration) (codec h264)
+ V....D hevc_amf             AMD AMF HEVC encoder (codec hevc)
+ V....D hevc_nvenc           NVIDIA NVENC hevc encoder (codec hevc)
+ V..... hevc_qsv             HEVC (Intel Quick Sync Video acceleration) (codec hevc)
+ V..... mjpeg_qsv            MJPEG (Intel Quick Sync Video acceleration) (codec mjpeg)
+ V..... mpeg2_qsv            MPEG-2 video (Intel Quick Sync Video acceleration) (codec mpeg2video)
+ V..... vp9_qsv              VP9 video (Intel Quick Sync Video acceleration) (codec vp9)
+== try ddagrab
+[Parsed_ddagrab_0 @ 0000026014228e80] Failed to create D3D11VA device.
+[Parsed_ddagrab_0 @ 0000026014228e80] Failed to configure output pad on Parsed_ddagrab_0
+ddagrab=output_idx=0:framerate=30:draw_mouse=0: Unknown error occurred
+ls: cannot access 'dd.mp4': No such file or directory
+== try gdigrab
+[libx264 @ 00000200e312c680] coded y,u,v intra: 65.0% 4.5% 4.7% inter: 2.5% 0.2% 0.2%
+[libx264 @ 00000200e312c680] i16 v,h,dc,p: 31% 58%  6%  6%
+[libx264 @ 00000200e312c680] kb/s:1620.72
+-rw-r--r-- 1 runneradmin 197121 406859 Oct 31 14:34 gd.mp4
+== try pcm pipe
+pcm exit 0
