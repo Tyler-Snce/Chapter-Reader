@@ -48,9 +48,15 @@ jobs:
           if ($t -notmatch 'vape') { throw 'fake cheat download not detected' }
           # The upload path Staff Toolkit reads from: send, read back, delete
           $url = 'https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app/progress/ss-CITEST.json'
-          Invoke-RestMethod -Method Put -Uri $url -Body (Get-Content "$env:RUNNER_TEMP\scan.json" -Raw) -ContentType 'application/json' | Out-Null
-          $back = Invoke-RestMethod -Uri $url
-          Invoke-RestMethod -Method Delete -Uri $url | Out-Null
+          try {
+            $body = [System.IO.File]::ReadAllBytes("$env:RUNNER_TEMP\scan.json")
+            Invoke-RestMethod -Method Put -Uri $url -Body $body -ContentType 'application/json; charset=utf-8' | Out-Null
+            $back = Invoke-RestMethod -Uri $url
+            Invoke-RestMethod -Method Delete -Uri $url | Out-Null
+          } catch {
+            "upload test error: $($_.Exception.Message) $($_.ErrorDetails.Message)" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
+            throw
+          }
           if (-not $back.id) { throw 'report upload/readback failed' }
           "upload test: report $($back.id) sent and read back OK" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
 
