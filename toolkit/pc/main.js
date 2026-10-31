@@ -267,6 +267,11 @@ async function captured(file, kind, flagId) {
   captures.unshift(item);
   saveLists();
   send('capture', item);
+  // Automatic clips (from a flagged message) are only uploaded if that's turned on, in case something private was on screen
+  if (flagId && kind === 'clip' && !settings.autoClipUpload) {
+    notify('Evidence clip saved', 'Check it, then press Upload in Staff Toolkit to share it.', () => showWindow('capture'));
+    return;
+  }
   if (settings.afterCapture === 'upload' && settings.uploadTo !== 'none') await doUpload(item);
   else notify(kind === 'screenshot' ? 'Screenshot saved' : 'Video saved', path.basename(file), () => shell.showItemInFolder(file));
 }
@@ -364,6 +369,14 @@ ipcMain.on('set', (_e, patch) => setSettings(patch));
 ipcMain.handle('sources', async () => {
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 160, height: 90 } });
   return sources.map((s) => ({ id: s.id, name: s.name, thumb: s.thumbnail.toDataURL() }));
+});
+// "Only the game": pick the Minecraft / Lunar window as what to capture
+ipcMain.handle('use-game-window', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 } });
+  const w = sources.find((x) => /minecraft|lunar client|orbit/i.test(x.name) && !/staff toolkit|launcher/i.test(x.name));
+  if (!w) return null;
+  setSettings({ source: w.id, sourceName: w.name });
+  return w.name;
 });
 ipcMain.handle('temp-dir', () => { const d = path.join(app.getPath('temp'), 'staff-toolkit'); fs.mkdirSync(d, { recursive: true }); return d; });
 ipcMain.handle('out-file', (_e, kind) => path.join(folder(), (kind === 'clip' ? 'Clip ' : 'Recording ') + stamp() + '.mp4'));

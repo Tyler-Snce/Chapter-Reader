@@ -422,6 +422,13 @@ for (const id of ['fps', 'resolution', 'quality']) $(id).addEventListener('chang
 $('showCursor').addEventListener('change', () => { set({ showCursor: $('showCursor').checked }); captureChanged(); });
 
 // What to capture
+$('gameOnly').addEventListener('click', async () => {
+  const name = await ipcRenderer.invoke('use-game-window');
+  if (!name) { toast('Minecraft isn\'t open \u2013 start the game, then press this again'); return; }
+  $('srcName').textContent = name;
+  toast('Recording only the game window. Windows on top of it won\'t appear (the mouse cursor does show in window recordings).');
+  captureChanged();
+});
 $('pickSrc').addEventListener('click', async () => {
   const box = $('sources');
   if (!box.hidden) { box.hidden = true; return; }
@@ -539,6 +546,7 @@ function renderSettings() {
   renderHooks();
   $('flagsToDiscord').checked = !!S.flagsToDiscord;
   $('autoClipFlags').checked = !!S.autoClipFlags;
+  $('autoClipUpload').checked = !!S.autoClipUpload;
   $('notifyFlags').checked = !!S.notifyFlags;
   $('startup').checked = !!S.startup;
   document.querySelectorAll('.hotkey').forEach((h) => { h.value = S.hotkeys[h.dataset.key] || ''; });
@@ -601,7 +609,7 @@ $('hookSave').addEventListener('click', () => {
   renderHooks();
   toast('Added and selected ' + name + ' \u2013 press Test to check it');
 });
-for (const id of ['flagsToDiscord', 'autoClipFlags', 'notifyFlags', 'startup']) $(id).addEventListener('change', () => set({ [id]: $(id).checked }));
+for (const id of ['flagsToDiscord', 'autoClipFlags', 'autoClipUpload', 'notifyFlags', 'startup']) $(id).addEventListener('change', () => set({ [id]: $(id).checked }));
 $('folderLink').addEventListener('click', () => ipcRenderer.send('open-folder'));
 $('chooseFolder').addEventListener('click', async () => { $('folderLink').textContent = await ipcRenderer.invoke('choose-folder'); });
 $('saveRules').addEventListener('click', () => {

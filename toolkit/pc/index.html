@@ -164,7 +164,7 @@
     <div class="grid2" style="margin-top:14px">
       <div class="card">
         <h2 style="margin-top:0">Video</h2>
-        <div class="row"><span class="grow">What to capture: <b id="srcName">Main screen</b></span><button id="pickSrc" class="small">Change&hellip;</button></div>
+        <div class="row"><span class="grow">What to capture: <b id="srcName">Main screen</b></span><button id="gameOnly" class="small" title="Record just the Minecraft window \u2013 other windows on top of it won't appear">Only the game</button><button id="pickSrc" class="small">Change&hellip;</button></div>
         <div class="sources" id="sources" hidden></div>
         <div class="row" style="margin-top:10px">
           <label>FPS <select id="fps"><option>30</option><option>60</option><option>120</option><option>144</option></select></label>
@@ -220,6 +220,8 @@
         </details>
         <label style="margin-top:10px"><input type="checkbox" id="flagsToDiscord"> Post flagged chat messages to this channel</label>
         <label><input type="checkbox" id="autoClipFlags"> Automatically save a clip when a message is flagged (needs the replay buffer)</label>
+        <label><input type="checkbox" id="autoClipUpload"> Also upload those automatic clips straight away</label>
+        <p class="note" style="margin:0">Off by default: automatic clips are saved for you to check first, in case something private was on screen.</p>
       </div>
 
       <div class="card">

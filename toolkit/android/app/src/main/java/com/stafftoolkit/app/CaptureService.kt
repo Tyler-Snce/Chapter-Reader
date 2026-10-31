@@ -253,7 +253,11 @@ class CaptureService : Service() {
         val cap = Store.Capture(Store.newId(), uri.toString(), name, kind, System.currentTimeMillis(), Media.size(this, uri), flagId = flagId)
         Store.addCapture(this, cap)
         changed()
-        if (prefs.getString("after", "upload") == "upload" && prefs.getString("uploadTo", "catbox") != "none") upload(cap)
+        // Automatic clips (from a flagged message) are only uploaded if that's turned on, in case something private was on screen
+        val auto = flagId != null && kind == "clip"
+        if (auto && !prefs.getBoolean("autoClipUpload", false)) alert(cap.id.hashCode(), "Evidence clip saved", "Check it, then press Upload in Staff Toolkit to share it.",
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        else if (prefs.getString("after", "upload") == "upload" && prefs.getString("uploadTo", "catbox") != "none") upload(cap)
         else alert(cap.id.hashCode(), "Saved to your gallery", name, null)
     }
 
@@ -401,6 +405,16 @@ class CaptureService : Service() {
         menu.addView(btn("📷", "Screenshot") { menu.visibility = View.GONE; work.execute { screenshot() } })
         menu.addView(btn("⏺", "Start or stop recording") { menu.visibility = View.GONE; work.execute { toggleRecording() } })
         menu.addView(btn("⏪", "Save the last seconds") { menu.visibility = View.GONE; work.execute { saveClip(null) } })
+        menu.addView(btn("\uD83D\uDCAC", "Switch Discord channel") {
+            // Cycle through the saved channels (and None)
+            val hooks = Store.hooks(this)
+            val ids = listOf("") + hooks.map { it.id }
+            val cur = prefs.getString("activeWebhook", "") ?: ""
+            val next = ids[(ids.indexOf(cur).coerceAtLeast(0) + 1) % ids.size]
+            prefs.edit().putString("activeWebhook", next).apply()
+            toast(hooks.find { it.id == next }?.let { "Discord: ${it.name}" } ?: "Discord: off")
+            onChange?.let { main.post(it) }
+        })
         menu.addView(btn("⚙", "Open Staff Toolkit") {
             menu.visibility = View.GONE
             startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

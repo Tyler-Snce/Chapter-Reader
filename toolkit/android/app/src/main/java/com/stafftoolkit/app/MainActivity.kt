@@ -53,7 +53,7 @@ class MainActivity : Activity() {
         root.addView(statusText)
         startBtn = button("Start", ACCENT) { toggleRunning() }.apply { textSize = 17f; minHeight = px(56) }
         root.addView(startBtn, lp(top = 10))
-        root.addView(text("Starting asks to share your screen. Choose \"Entire screen\" so it works in Minecraft. A floating button then gives you screenshot, record and save-clip.", MUTED, 12.5f), lp(top = 6))
+        root.addView(text("Starting asks to share your screen. Choose \"A single app\" \u2192 Minecraft to record only the game (best for privacy), or \"Entire screen\". A floating button then gives you screenshot, record and save-clip.", MUTED, 12.5f), lp(top = 6))
 
         // Quick buttons
         val quick = row()
@@ -82,6 +82,8 @@ class MainActivity : Activity() {
         c2.addView(choice("Quality", "quality", listOf("standard" to "Standard", "high" to "High", "max" to "Best"), "high"))
         c2.addView(check("Floating button over games", "bubble", true) { if (it) askOverlay(); refresh() })
         c2.addView(check("Save a clip automatically when a message is flagged", "autoClip", false))
+        c2.addView(check("Also upload those automatic clips straight away", "autoClipUpload", false))
+        c2.addView(text("Tip: when you press Start, choose \"A single app\" \u2192 Minecraft. Then only the game is recorded \u2013 not notifications or other apps.", MUTED, 12.5f))
         c2.addView(text("Size, FPS, quality and sound changes apply the next time you press Start.", MUTED, 12.5f))
         root.addView(c2, lp())
 
