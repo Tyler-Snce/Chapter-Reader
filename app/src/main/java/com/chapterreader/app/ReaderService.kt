@@ -465,19 +465,72 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         "^(i\\s*\\S?\\s*)?(love|luv|heart|<3|\u2665|\u2764|\u2661)?\\s*(manga|manhwa|manhua|webtoons?|comics?|toon\\w*|scans?)\\s*(club|zone|world|online|hub|land)?$",
         RegexOption.IGNORE_CASE
     )
-    private val seenEdgeText = HashMap<String, SpeechBubble>()
+    // "I ♥ MANGA" style stamps that got read together with a speech bubble
+    private val inlineMark = Regex(
+        "\\bi\\s*(?:[^\\p{L}\\p{N}\\s]{1,3}|<3|v|y|love|luv|heart)?\\s*(?:manga|manhwa|manhua|webtoons?)(?:\\s*(?:club|zone|world|online|hub|land))?\\b",
+        RegexOption.IGNORE_CASE
+    )
+    private val seenEdgeText = HashMap<String, MutableList<SpeechBubble>>()
+    /** Watermarks found before; remembered so they're never read out again. */
+    private val learnedMarks: MutableSet<String> by lazy { HashSet(prefs.getStringSet("learnedMarks", emptySet()) ?: emptySet()) }
+
+    private fun norm(t: String) = t.lowercase().replace(Regex("[^a-z0-9]"), "")
+
+    val learnedMarkCount: Int get() = learnedMarks.size
+
+    fun forgetMarks() {
+        learnedMarks.clear()
+        prefs.edit().remove("learnedMarks").apply()
+    }
+
+    private fun learnMark(text: String) {
+        val key = norm(text)
+        if (key.length < 4 || key.length > 30 || !learnedMarks.add(key)) return
+        while (learnedMarks.size > 300) learnedMarks.remove(learnedMarks.first())
+        prefs.edit().putStringSet("learnedMarks", HashSet(learnedMarks)).apply()
+    }
+
+    /** Removes watermark words from inside a bubble's text, keeping the words around them. */
+    private fun stripMarks(text: String): String {
+        var t = inlineMark.replace(text) { m -> learnMark(m.value); " " }
+        if (learnedMarks.isNotEmpty()) {
+            val words = t.split(Regex("\\s+")).filter { it.isNotEmpty() }
+            val keys = words.map { norm(it) }
+            val out = ArrayList<String>()
+            var i = 0
+            while (i < words.size) {
+                var skip = 0
+                if (keys[i].isNotEmpty()) {
+                    var acc = ""
+                    for (j in i until min(words.size, i + 6)) {
+                        acc += keys[j]
+                        if (acc.length > 30) break
+                        if (acc.length >= 4 && acc in learnedMarks) skip = j - i + 1
+                    }
+                }
+                if (skip > 0) i += skip else { out.add(words[i]); i++ }
+            }
+            t = out.joinToString(" ")
+        }
+        return t.replace(Regex("\\s+"), " ").replace(Regex("^[^\\p{L}\\p{N}]+(?=\\p{L})"), "").trim()
+    }
 
     private fun isWatermark(b: SpeechBubble): Boolean {
-        val key = b.text.lowercase().replace(Regex("[^a-z0-9]"), "")
-        if (key.isEmpty()) return true
-        if (watermarkWords.matches(b.text.replace(Regex("[^\\p{L}\\p{N}<\u2665\u2764\u2661 ]"), "").trim())) return true
+        val key = norm(b.text)
+        if (key.isEmpty() || b.text.count { it.isLetter() } < 2) return true
+        if (watermarkWords.matches(b.text.replace(Regex("[^\\p{L}\\p{N}<\u2665\u2764\u2661 ]"), "").trim())) {
+            learnMark(b.text); return true
+        }
         if (key.length > 25) return false
         val nearEdge = b.y < 0.12f || b.y + b.h > 0.88f || b.x > 0.6f || b.x + b.w < 0.4f
         if (!nearEdge) return false
-        val first = seenEdgeText[key]
-        if (first == null) { seenEdgeText[key] = b; return false }
-        // A stamp repeats in the same spot on another page; ordinary repeated lines ("What?") don't
-        return first.img != b.img && abs(first.x - b.x) < 0.08f && abs(first.y - b.y) < 0.08f
+        val seen = seenEdgeText.getOrPut(key) { ArrayList() }
+        val same = seen.filter { it.img != b.img && abs(it.x - b.x) < 0.08f && abs(it.y - b.y) < 0.08f }
+        if (seen.size < 20) seen.add(b)
+        // A stamp repeats in the same spot on other pages; ordinary repeated lines ("What?") don't
+        if (same.isEmpty()) return false
+        if (same.map { it.img }.toSet().size >= 2) learnMark(b.text)   // seen on 3+ pages: remember it
+        return true
     }
 
     private fun addItems(pi: Int, text: String) {
@@ -511,7 +564,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun addBubbles(all: List<SpeechBubble>) {
-        val found = all.filterNot { isWatermark(it) }
+        val found = all.map { it.copy(text = stripMarks(it.text)) }.filterNot { isWatermark(it) }
         for ((n, b) in found.withIndex()) {
             if (n == 0 && joinSplit(b)) continue
             val pi = bubbleTexts.size

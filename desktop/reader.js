@@ -466,19 +466,67 @@ function tidy(raw) {
 
 // Site watermarks stamped on the pictures (e.g. "I ♥ MANGA") shouldn't be read out
 const WATERMARK_WORDS = /^(i\s*\S?\s*)?(love|luv|heart|<3|\u2665|\u2764|\u2661)?\s*(manga|manhwa|manhua|webtoons?|comics?|toon\w*|scans?)\s*(club|zone|world|online|hub|land)?$/i;
-let seenEdgeText = new Map();   // short text near a page edge -> where it was first seen
+// "I ♥ MANGA" style stamps that got read together with a speech bubble
+const INLINE_MARK = /\bi\s*(?:[^\p{L}\p{N}\s]{1,3}|<3|v|y|love|luv|heart)?\s*(?:manga|manhwa|manhua|webtoons?)(?:\s*(?:club|zone|world|online|hub|land))?\b/giu;
+let seenEdgeText = new Map();   // short text near a page edge -> where it was seen
+const norm = (t) => String(t).toLowerCase().replace(/[^a-z0-9]/g, '');
+const learnedMarks = () => new Set(settings.learnedMarks || []);
+
+/** Remembers a watermark so it's never read out again. */
+function learnMark(text) {
+  const key = norm(text);
+  const set = learnedMarks();
+  if (key.length < 4 || key.length > 30 || set.has(key)) return;
+  const list = [...set, key].slice(-300);
+  settings.learnedMarks = list;
+  ipcRenderer.send('settings-set', { learnedMarks: list });
+  showMarks();
+}
+
+/** Removes watermark words from inside a bubble's text, keeping the words around them. */
+function stripMarks(text) {
+  let t = text.replace(INLINE_MARK, (m) => { learnMark(m); return ' '; });
+  const set = learnedMarks();
+  if (set.size) {
+    const words = t.split(/\s+/).filter(Boolean), keys = words.map(norm), out = [];
+    for (let i = 0; i < words.length;) {
+      let skip = 0;
+      if (keys[i]) {
+        let acc = '';
+        for (let j = i; j < Math.min(words.length, i + 6); j++) {
+          acc += keys[j];
+          if (acc.length > 30) break;
+          if (acc.length >= 4 && set.has(acc)) skip = j - i + 1;
+        }
+      }
+      if (skip) i += skip; else out.push(words[i++]);
+    }
+    t = out.join(' ');
+  }
+  return t.replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+(?=\p{L})/u, '').trim();
+}
 
 function isWatermark(b) {
-  const key = b.text.toLowerCase().replace(/[^a-z0-9]/g, '');
-  if (!key) return true;
-  if (WATERMARK_WORDS.test(b.text.replace(/[^\p{L}\p{N}<\u2665\u2764\u2661 ]/gu, '').trim())) return true;
+  const key = norm(b.text);
+  if (!key || (b.text.match(/\p{L}/gu) || []).length < 2) return true;
+  if (WATERMARK_WORDS.test(b.text.replace(/[^\p{L}\p{N}<♥❤♡ ]/gu, '').trim())) { learnMark(b.text); return true; }
   if (key.length > 25) return false;
   const nearEdge = b.y < 0.12 || b.y + b.h > 0.88 || b.x > 0.6 || b.x + b.w < 0.4;
   if (!nearEdge) return false;
-  const first = seenEdgeText.get(key);
-  if (first === undefined) { seenEdgeText.set(key, b); return false; }
-  // A stamp repeats in the same spot on another page; ordinary repeated lines ("What?") don't
-  return first.img !== b.img && Math.abs(first.x - b.x) < 0.08 && Math.abs(first.y - b.y) < 0.08;
+  if (!seenEdgeText.has(key)) seenEdgeText.set(key, []);
+  const seen = seenEdgeText.get(key);
+  const same = seen.filter((s) => s.img !== b.img && Math.abs(s.x - b.x) < 0.08 && Math.abs(s.y - b.y) < 0.08);
+  if (seen.length < 20) seen.push(b);
+  // A stamp repeats in the same spot on other pages; ordinary repeated lines ("What?") don't
+  if (!same.length) return false;
+  if (new Set(same.map((s) => s.img)).size >= 2) learnMark(b.text);   // seen on 3+ pages: remember it
+  return true;
+}
+
+function showMarks() {
+  const n = (settings.learnedMarks || []).length;
+  const btn = $('forgetMarks');
+  if (btn) { btn.textContent = n ? 'Forget ' + n + ' learned watermark' + (n === 1 ? '' : 's') : 'No watermarks learned yet'; btn.disabled = !n; }
 }
 
 function addItems(pi, t) {
@@ -510,7 +558,7 @@ function joinSplit(b) {
 
 function addBubbles(found) {
   const ch = st.chapter;
-  found = found.filter((b) => !isWatermark(b));
+  found = found.map((b) => ({ ...b, text: stripMarks(b.text) })).filter((b) => !isWatermark(b));
   for (const [n, b] of found.entries()) {
     if (n === 0 && joinSplit(b)) continue;
     const pi = ch.paras.length;
@@ -777,7 +825,12 @@ document.addEventListener('keydown', (e) => {
 
 ipcRenderer.on('cmd', (_e, c) => command(c));
 ipcRenderer.on('status', (_e, msg) => setStatus(msg));
-ipcRenderer.on('settings', (_e, s) => { Object.assign(settings, s); push(); });
+ipcRenderer.on('settings', (_e, s) => { Object.assign(settings, s); showMarks(); push(); });
+$('forgetMarks').addEventListener('click', () => {
+  settings.learnedMarks = [];
+  ipcRenderer.send('settings-set', { learnedMarks: [] });
+  showMarks();
+});
 
 ipcRenderer.invoke('settings-get').then((s) => {
   Object.assign(settings, s);
@@ -787,6 +840,7 @@ ipcRenderer.invoke('settings-get').then((s) => {
   document.documentElement.style.setProperty('--text-size', (settings.textSize || 19) + 'px');
   $('artPace').value = String(settings.artPace ?? 1);
   showPace();
+  showMarks();
   $('syncUser').value = settings.syncUser || '';
   $('syncPin').value = settings.syncPin || '';
   if (!syncOn()) $('syncRow').style.display = 'none';

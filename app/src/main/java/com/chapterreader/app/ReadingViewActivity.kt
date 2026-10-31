@@ -174,7 +174,25 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
         row2.addView(button("A−") { setText(textSize - 1f) }, small())
         row2.addView(button("A+") { setText(textSize + 1f) }, small())
         // Manga only: how quickly to scroll through the artwork between speech bubbles
-        paceBtn = button("") { nextPace() }.apply { visibility = View.GONE }
+        paceBtn = button("") { nextPace() }.apply {
+            visibility = View.GONE
+            // Hold to forget the watermarks the app has learned to skip
+            setOnLongClickListener {
+                val s = svc()
+                val n = s?.learnedMarkCount ?: 0
+                if (s == null || n == 0) {
+                    Toast.makeText(this@ReadingViewActivity, "No watermarks learned yet", Toast.LENGTH_SHORT).show()
+                } else {
+                    android.app.AlertDialog.Builder(this@ReadingViewActivity)
+                        .setTitle("Forget watermarks?")
+                        .setMessage("The app has learned $n watermark(s) to skip. Forget them so they get read again?")
+                        .setPositiveButton("Forget") { _, _ -> s.forgetMarks() }
+                        .setNegativeButton("Keep", null)
+                        .show()
+                }
+                true
+            }
+        }
         row2.addView(paceBtn, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f).apply { setMargins(px(3), 0, px(3), 0) })
         row2.addView(button("◎ Follow") {
             lastTouch = 0
