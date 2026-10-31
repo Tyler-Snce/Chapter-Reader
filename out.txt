@@ -1,0 +1,10 @@
+PUT root:
+{"device":"ci","para":1,"title":"t","updated":1,"url":"https://a.com/x/chapter-1"}
+PATCH lib:
+{"para":2,"url":"https://a.com/x/chapter-1","updated":2,"library":{"a_com_x":{"deleted":false,"manga":false,"para":2,"series":"X","title":"t","updated":2,"url":"https://a.com/x/chapter-1"}},"title":"t","device":"ci"}
+POST override:
+{"para":3,"library":{"b_com_y":{"deleted":false,"manga":true,"para":1,"series":"Y","title":"t","updated":3,"url":"u"}}}
+GET:
+{"device":"ci","library":{"a_com_x":{"deleted":false,"manga":false,"para":2,"series":"X","title":"t","updated":2,"url":"https://a.com/x/chapter-1"},"b_com_y":{"deleted":false,"manga":true,"para":1,"series":"Y","title":"t","updated":3,"url":"u"}},"para":3,"title":"t","updated":2,"url":"https://a.com/x/chapter-1"}
+DELETE:
+null
