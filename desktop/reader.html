@@ -40,6 +40,8 @@
   .bub { position: absolute; border-radius: 12px; cursor: pointer; }
   .bub:hover { background: rgba(123,92,255,.08); }
   .bub.cur { outline: 3px solid var(--accent); outline-offset: 4px; background: rgba(123,92,255,.12); }
+  header, footer, #caption { flex-shrink: 0; }
+  main { min-height: 120px; }
   #caption { display: none; background: var(--highlight); color: var(--text-on); padding: 10px 18px; font-size: 15px; max-height: 6.5em; overflow-y: auto; }
   #caption.show { display: block; }
   .empty { color: var(--muted); font-size: 16px; max-width: 46ch; }
