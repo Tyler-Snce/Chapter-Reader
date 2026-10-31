@@ -6,6 +6,7 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import java.io.File
@@ -72,7 +73,7 @@ class MangaOcr(private val userAgent: String) {
 
     /** Reads the text in one page image, in reading order (top to bottom, left to right). */
     @Suppress("DEPRECATION")
-    fun bubbles(file: File, imgIndex: Int): List<SpeechBubble> {
+    fun bubbles(file: File, imgIndex: Int, marks: Set<String> = emptySet(), onMark: (String) -> Unit = {}): List<SpeechBubble> {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
         val w = bounds.outWidth
@@ -98,12 +99,10 @@ class MangaOcr(private val userAgent: String) {
                     val k = sample / (if (bmp === raw) 1f else up)
                     try {
                         val result = Tasks.await(recognizer.process(InputImage.fromBitmap(bmp, 0)), 30, TimeUnit.SECONDS)
-                        for (block in result.textBlocks) {
-                            val r = block.boundingBox ?: continue
-                            val lines = block.lines
-                            val lineH = (if (lines.isNotEmpty()) r.height() / lines.size else r.height()) * k
-                            val text = lines.joinToString(" ") { it.text }
-                            found.add(Box((r.left * k).toInt(), (r.top * k).toInt() + top, (r.right * k).toInt(), (r.bottom * k).toInt() + top, text, max(1, lineH.toInt())))
+                        for (block in result.textBlocks) for (line in block.lines) {
+                            for (g in segments(line, marks, onMark)) {
+                                found.add(Box((g.l * k).toInt(), (g.t * k).toInt() + top, (g.r * k).toInt(), (g.b * k).toInt() + top, g.text, max(1, (g.h * k).toInt())))
+                            }
                         }
                     } catch (_: Exception) {
                     } finally {
@@ -154,6 +153,51 @@ class MangaOcr(private val userAgent: String) {
         }
     }
 
+    private class Seg(val l: Int, val t: Int, val r: Int, val b: Int, val text: String, val h: Int)
+    private class Word(val text: String, val l: Int, val t: Int, val r: Int, val b: Int)
+
+    /**
+     * Splits one recognised line where there's a wide gap between words (e.g. the end of a
+     * speech bubble and a stamp beside it), and drops watermark words, so the rest of the
+     * line still joins up with its own bubble.
+     */
+    private fun segments(line: Text.Line, marks: Set<String>, onMark: (String) -> Unit): List<Seg> {
+        val lb = line.boundingBox ?: return emptyList()
+        val words = line.elements.mapNotNull { e -> e.boundingBox?.let { Word(e.text, it.left, it.top, it.right, it.bottom) } }
+            .ifEmpty { listOf(Word(line.text, lb.left, lb.top, lb.right, lb.bottom)) }
+        val h = max(1, lb.height())
+        val keys = words.map { norm(it.text) }
+        val keep = BooleanArray(words.size) { true }
+        for (k in words.indices) {
+            if (!markWord.matches(keys[k])) continue
+            keep[k] = false
+            var p = k - 1
+            while (p >= max(0, k - 2) && markLead.matches(keys[p])) { keep[p] = false; p-- }
+        }
+        if (marks.isNotEmpty()) for (i in words.indices) {
+            var acc = ""; var end = -1
+            for (j in i until min(words.size, i + 6)) {
+                acc += keys[j]
+                if (acc.length > 30) break
+                if (acc.length >= 4 && acc in marks) end = j
+            }
+            for (j in i..end) keep[j] = false
+        }
+        if (keep.any { !it }) onMark(words.filterIndexed { i, _ -> !keep[i] }.joinToString(" ") { it.text })
+        val pieces = ArrayList<MutableList<Int>>()
+        var cur = ArrayList<Int>()
+        for (i in words.indices) {
+            if (cur.isNotEmpty() && words[i].l - words[i - 1].r > h * 3 / 2) { pieces.add(cur); cur = ArrayList() }
+            cur.add(i)
+        }
+        pieces.add(cur)
+        return pieces.mapNotNull { piece ->
+            val ws = piece.filter { keep[it] }.map { words[it] }
+            if (ws.isEmpty()) null
+            else Seg(ws.minOf { it.l }, ws.minOf { it.t }, ws.maxOf { it.r }, ws.maxOf { it.b }, ws.joinToString(" ") { it.text }, h)
+        }
+    }
+
     private fun overlapShare(a: Box, b: Box): Float {
         val iw = min(a.r, b.r) - max(a.l, b.l)
         val ih = min(a.b, b.b) - max(a.t, b.t)
@@ -163,6 +207,11 @@ class MangaOcr(private val userAgent: String) {
     }
 
     companion object {
+        // A word that is (part of) a site stamp such as "I ♥ MANGA"
+        private val markWord = Regex("^(?:i[vy]?|i?love|i?luv)?(?:manga|manhwa|manhua|webtoons?)$")
+        private val markLead = Regex("^(?:|i|1|l|3|lt3|v|y|love|luv|heart)$")
+        fun norm(t: String) = t.lowercase().replace(Regex("[^a-z0-9]"), "")
+
         private val watermark = Regex("https?://|www\\.|\\.(com|net|org|io|gg|me)\\b|discord|patreon|ko-fi", RegexOption.IGNORE_CASE)
 
         /** Cleans up recognised text, or returns null for scraps and site watermarks. */

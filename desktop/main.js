@@ -310,7 +310,7 @@ ipcMain.handle('ocr', async (_e, png) => {
       if (/too long/.test(e.message)) stopOcr('restarting');
       throw e;
     });
-    return lines.map((x) => ({ l: x.l, t: x.t, r: x.r, b: x.b, text: x.text, lineH: Math.max(1, x.b - x.t) }));
+    return lines.map((x) => ({ l: x.l, t: x.t, r: x.r, b: x.b, text: x.text, lineH: Math.max(1, x.b - x.t), words: Array.isArray(x.words) ? x.words : (x.words ? [x.words] : []) }));
   } finally {
     ocrJobs.delete(id);
     fs.unlink(file, () => {});

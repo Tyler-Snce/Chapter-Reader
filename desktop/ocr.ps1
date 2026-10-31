@@ -49,18 +49,20 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     $lines = New-Object System.Collections.ArrayList
     foreach ($ln in $result.Lines) {
       $l = [double]::MaxValue; $t = [double]::MaxValue; $r = 0.0; $b = 0.0
+      $words = New-Object System.Collections.ArrayList
       foreach ($w in $ln.Words) {
         $box = $w.BoundingRect
+        [void]$words.Add([ordered]@{ text = $w.Text; l = $box.X; t = $box.Y; r = $box.X + $box.Width; b = $box.Y + $box.Height })
         if ($box.X -lt $l) { $l = $box.X }
         if ($box.Y -lt $t) { $t = $box.Y }
         if ($box.X + $box.Width -gt $r) { $r = $box.X + $box.Width }
         if ($box.Y + $box.Height -gt $b) { $b = $box.Y + $box.Height }
       }
-      [void]$lines.Add([ordered]@{ text = $ln.Text; l = $l; t = $t; r = $r; b = $b })
+      [void]$lines.Add([ordered]@{ text = $ln.Text; l = $l; t = $t; r = $r; b = $b; words = $words.ToArray() })
     }
     $stream.Dispose()
     $bitmap.Dispose()
-    ConvertTo-Json -Compress -Depth 4 -InputObject @{ id = $id; lines = $lines.ToArray() }
+    ConvertTo-Json -Compress -Depth 6 -InputObject @{ id = $id; lines = $lines.ToArray() }
   } catch {
     ConvertTo-Json -Compress -InputObject @{ id = $id; error = $_.Exception.Message }
   }

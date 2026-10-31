@@ -381,7 +381,7 @@ async function readPage(blob, imgIndex) {
     ctx.drawImage(bmp, 0, top, W, bottom - top, 0, 0, cw, ch);
     const png = await canvas.convertToBlob({ type: 'image/png' });
     const res = await ipcRenderer.invoke('ocr', new Uint8Array(await png.arrayBuffer()));
-    for (const b of res) {
+    for (const line of res) for (const b of lineSegments(line)) {
       found.push({ l: b.l / scale, t: b.t / scale + top, r: b.r / scale, b: b.b / scale + top, text: b.text, lineH: Math.max(1, b.lineH / scale) });
     }
     if (bottom >= H) break;
@@ -419,6 +419,61 @@ async function readPage(blob, imgIndex) {
     const t = tidy(b.text);
     return t ? { img: imgIndex, x: b.l / W, y: b.t / H, w: (b.r - b.l) / W, h: (b.b - b.t) / H, text: t } : null;
   }).filter(Boolean);
+}
+
+// A word that is (part of) a site stamp such as "I ♥ MANGA"
+const MARK_WORD = /^(?:i[vy]?|i?love|i?luv)?(?:manga|manhwa|manhua|webtoons?)$/;
+const MARK_LEAD = /^(?:|i|1|l|3|lt3|v|y|love|luv|heart)$/;
+
+/**
+ * Splits one recognised line where there's a wide gap between words (e.g. the end of a
+ * speech bubble and a stamp beside it), and drops watermark words, so the rest of the
+ * line still joins up with its own bubble.
+ */
+function lineSegments(line) {
+  const words = (line.words && line.words.length) ? line.words.filter((w) => w && w.text)
+    : [{ text: line.text, l: line.l, t: line.t, r: line.r, b: line.b }];
+  if (!words.length) return [];
+  const H = Math.max(1, line.b - line.t);
+  const keys = words.map((w) => norm(w.text));
+  const keep = words.map(() => true);
+  for (let k = 0; k < words.length; k++) {
+    if (!MARK_WORD.test(keys[k])) continue;
+    keep[k] = false;
+    for (let p = k - 1; p >= Math.max(0, k - 2) && MARK_LEAD.test(keys[p]); p--) keep[p] = false;
+  }
+  const learned = learnedMarks();
+  if (learned.size) {
+    for (let i = 0; i < words.length; i++) {
+      let acc = '', end = -1;
+      for (let j = i; j < Math.min(words.length, i + 6); j++) {
+        acc += keys[j];
+        if (acc.length > 30) break;
+        if (acc.length >= 4 && learned.has(acc)) end = j;
+      }
+      for (let j = i; j <= end; j++) keep[j] = false;
+    }
+  }
+  if (keep.some((k) => !k)) learnMark(words.filter((_, i) => !keep[i]).map((w) => w.text).join(' '));
+  // Group words into pieces separated by wide gaps, then leave out the watermark words
+  const pieces = [];
+  let cur = [];
+  words.forEach((w, i) => {
+    if (cur.length && w.l - words[i - 1].r > H * 1.5) { pieces.push(cur); cur = []; }
+    cur.push(i);
+  });
+  pieces.push(cur);
+  const out = [];
+  for (const piece of pieces) {
+    const ws = piece.filter((i) => keep[i]).map((i) => words[i]);
+    if (!ws.length) continue;
+    out.push({
+      l: Math.min(...ws.map((w) => w.l)), t: Math.min(...ws.map((w) => w.t)),
+      r: Math.max(...ws.map((w) => w.r)), b: Math.max(...ws.map((w) => w.b)),
+      text: ws.map((w) => w.text).join(' '), lineH: H,
+    });
+  }
+  return out;
 }
 
 /** Fixes letters misread as digits in comic lettering: "1 HEARD" -> "I HEARD", "N0" -> "NO". */

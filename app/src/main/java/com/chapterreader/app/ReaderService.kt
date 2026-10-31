@@ -444,7 +444,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                 val ok = try { pages[i].get() } catch (_: Exception) { false }
                 if (myGen != mangaGen) { downloads.shutdownNow(); return@execute }
                 val found = if (ok) {
-                    try { reader.bubbles(f, i) } catch (_: Throwable) { emptyList() }
+                    try { reader.bubbles(f, i, learnedMarks) { learnMark(it) } } catch (_: Throwable) { emptyList() }
                 } else emptyList()
                 handler.post { if (myGen == mangaGen) addBubbles(found) }
             }
@@ -472,7 +472,11 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     )
     private val seenEdgeText = HashMap<String, MutableList<SpeechBubble>>()
     /** Watermarks found before; remembered so they're never read out again. */
-    private val learnedMarks: MutableSet<String> by lazy { HashSet(prefs.getStringSet("learnedMarks", emptySet()) ?: emptySet()) }
+    private val learnedMarks: MutableSet<String> by lazy {
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>()).apply {
+            addAll(prefs.getStringSet("learnedMarks", emptySet()) ?: emptySet())
+        }
+    }
 
     private fun norm(t: String) = t.lowercase().replace(Regex("[^a-z0-9]"), "")
 
@@ -483,6 +487,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         prefs.edit().remove("learnedMarks").apply()
     }
 
+    @Synchronized
     private fun learnMark(text: String) {
         val key = norm(text)
         if (key.length < 4 || key.length > 30 || !learnedMarks.add(key)) return
