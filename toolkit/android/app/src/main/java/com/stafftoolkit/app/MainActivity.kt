@@ -101,20 +101,26 @@ class MainActivity : Activity() {
         c4.addView(choice("Then", "after", listOf("upload" to "Upload + copy link", "save" to "Just save"), "upload"))
         c4.addView(choice("Upload to", "uploadTo", listOf("catbox" to "Catbox", "discord" to "Discord", "both" to "Both", "none" to "Nowhere"), "catbox"))
         c4.addView(text("Everything is also saved in your gallery (Pictures / Movies → Staff Toolkit).", MUTED, 12.5f))
-        val hook = edit("Discord webhook link", prefs.getString("webhook", "") ?: "", false).apply {
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-        }
-        c4.addView(hook, lp(top = 8))
-        val hr = row()
-        hr.addView(button("Save") { prefs.edit().putString("webhook", hook.text.toString().trim()).apply(); toast("Saved") }, weight())
-        hr.addView(button("Test") {
-            prefs.edit().putString("webhook", hook.text.toString().trim()).apply()
-            Thread {
-                val msg = try { Uploader.discord(this, hook.text.toString(), "Staff Toolkit (phone) is connected to this channel."); "Test sent – check the channel" } catch (e: Exception) { e.message ?: "Failed" }
-                runOnUiThread { toast(msg) }
-            }.start()
-        }, weight())
-        c4.addView(hr, lp(top = 6))
+        c4.addView(text("Discord channels \u2013 add one per server you staff on, then tap which one to use.", MUTED, 12.5f), lp(top = 10))
+        hookBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        c4.addView(hookBox)
+        renderHooks()
+        val hookName = edit("Name, e.g. Hypixel staff", "", false)
+        val hookUrl = edit("Webhook link", "", false).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        c4.addView(hookName, lp(top = 8))
+        c4.addView(hookUrl, lp(top = 6))
+        c4.addView(button("+ Add channel") {
+            val url = hookUrl.text.toString().trim()
+            if (!Uploader.validWebhook(url)) { toast("That doesn't look like a Discord webhook link"); return@button }
+            val list = Store.hooks(this)
+            val h = Store.Hook(Store.newId(), hookName.text.toString().trim().ifEmpty { "Discord ${list.size + 1}" }, url)
+            list.add(h)
+            Store.saveHooks(this, list)
+            prefs.edit().putString("activeWebhook", h.id).apply()
+            hookName.setText(""); hookUrl.setText("")
+            renderHooks()
+            toast("Added and selected ${h.name}")
+        }, lp(top = 6))
         c4.addView(check("Post flagged messages to Discord", "flagsToDiscord", false))
         c4.addView(text("Discord: channel settings → Integrations → Webhooks → New webhook → Copy URL.", MUTED, 12.5f))
         root.addView(c4, lp())
@@ -229,6 +235,42 @@ class MainActivity : Activity() {
         statusText.setTextColor(if (s?.recording == true) REC else MUTED)
         renderFlags()
         renderCaptures()
+    }
+
+    private lateinit var hookBox: LinearLayout
+
+    /** Saved Discord channels: tap one to use it; Test sends a message; \u2715 removes it. */
+    private fun renderHooks() {
+        hookBox.removeAllViews()
+        val active = prefs.getString("activeWebhook", "") ?: ""
+        val entries = listOf(Store.Hook("", "None (don't post to Discord)", "")) + Store.hooks(this)
+        for (h in entries) {
+            val r = row()
+            val on = h.id == active
+            val pick = button((if (on) "\u25CF  " else "\u25CB  ") + h.name, if (on) ACCENT else BTN) {
+                prefs.edit().putString("activeWebhook", h.id).apply()
+                renderHooks()
+                toast(if (h.id.isEmpty()) "Not posting to Discord" else "Posting to ${h.name}")
+            }.apply { gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(px(12), px(8), px(8), px(8)) }
+            r.addView(pick, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (h.id.isNotEmpty()) {
+                r.addView(button("Test") {
+                    Thread {
+                        val msg = try { Uploader.discord(this, h.url, "Staff Toolkit (phone) is connected to this channel (${h.name})."); "Test sent to ${h.name}" } catch (e: Exception) { e.message ?: "Failed" }
+                        runOnUiThread { toast(msg) }
+                    }.start()
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = px(6) })
+                r.addView(button("\u2715") {
+                    android.app.AlertDialog.Builder(this).setTitle("Remove ${h.name}?")
+                        .setPositiveButton("Remove") { _, _ ->
+                            Store.saveHooks(this, Store.hooks(this).filter { it.id != h.id })
+                            if (active == h.id) prefs.edit().putString("activeWebhook", "").apply()
+                            renderHooks()
+                        }.setNegativeButton("Keep", null).show()
+                }, LinearLayout.LayoutParams(px(44), LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = px(6) })
+            }
+            hookBox.addView(r, lp(top = 6))
+        }
     }
 
     private fun renderFlags() {

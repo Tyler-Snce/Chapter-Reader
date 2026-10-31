@@ -205,10 +205,19 @@
       </div>
 
       <div class="card">
-        <h2 style="margin-top:0">Discord</h2>
-        <input type="password" id="webhook" placeholder="Paste a webhook link" style="width:100%">
-        <p class="note">In Discord: channel settings &rarr; Integrations &rarr; Webhooks &rarr; New webhook &rarr; Copy webhook URL. Ask the server owner if it's not your server.</p>
-        <div class="row"><button id="saveWebhook" class="small primary">Save</button><button id="testWebhook" class="small">Send a test message</button></div>
+        <h2 style="margin-top:0">Discord channels</h2>
+        <p class="note" style="margin-top:0">Add one for each server you staff on, then pick which one is used. Link a Minecraft server address and it switches by itself when you join that server.</p>
+        <div id="hookList"></div>
+        <details id="hookAdd" style="margin-top:8px">
+          <summary style="cursor:pointer;color:var(--on)">+ Add a Discord channel</summary>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+            <input type="text" id="hookName" placeholder="Name, e.g. Hypixel staff">
+            <input type="password" id="hookUrl" placeholder="Webhook link">
+            <input type="text" id="hookServer" placeholder="Minecraft server address (optional), e.g. play.example.net">
+            <div class="row"><button id="hookSave" class="small primary">Add</button></div>
+            <p class="note" style="margin:0">In Discord: channel settings &rarr; Integrations &rarr; Webhooks &rarr; New webhook &rarr; Copy webhook URL. Ask the server owner if it's not your server.</p>
+          </div>
+        </details>
         <label style="margin-top:10px"><input type="checkbox" id="flagsToDiscord"> Post flagged chat messages to this channel</label>
         <label><input type="checkbox" id="autoClipFlags"> Automatically save a clip when a message is flagged (needs the replay buffer)</label>
       </div>

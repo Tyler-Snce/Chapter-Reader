@@ -100,5 +100,37 @@ object Store {
         }
     }
 
+    // ---------- Discord channels: several saved, one in use ----------
+
+    data class Hook(val id: String, val name: String, val url: String)
+
+    @Synchronized
+    fun hooks(ctx: Context): MutableList<Hook> {
+        val p = prefs(ctx)
+        // Older versions kept a single webhook
+        val old = p.getString("webhook", "") ?: ""
+        if (old.isNotEmpty() && p.getString("webhooks", null) == null) {
+            val h = Hook(newId(), "My Discord", old)
+            saveHooks(ctx, listOf(h))
+            p.edit().putString("activeWebhook", h.id).remove("webhook").apply()
+        }
+        return try {
+            val a = JSONArray(p.getString("webhooks", "[]"))
+            (0 until a.length()).map { a.getJSONObject(it).let { o -> Hook(o.getString("id"), o.optString("name"), o.optString("url")) } }.toMutableList()
+        } catch (_: Exception) { ArrayList() }
+    }
+
+    @Synchronized
+    fun saveHooks(ctx: Context, list: List<Hook>) {
+        val a = JSONArray()
+        list.forEach { a.put(JSONObject().put("id", it.id).put("name", it.name).put("url", it.url)) }
+        prefs(ctx).edit().putString("webhooks", a.toString()).apply()
+    }
+
+    fun activeHook(ctx: Context): Hook? {
+        val id = prefs(ctx).getString("activeWebhook", "") ?: ""
+        return hooks(ctx).find { it.id == id }
+    }
+
     fun newId(): String = java.lang.Long.toString(System.currentTimeMillis(), 36) + (1000..9999).random()
 }

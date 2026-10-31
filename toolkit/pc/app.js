@@ -536,7 +536,7 @@ $('openFolder').addEventListener('click', () => ipcRenderer.send('open-folder'))
 function renderSettings() {
   document.querySelectorAll('input[name=after]').forEach((r) => { r.checked = r.value === S.afterCapture; });
   $('uploadTo').value = S.uploadTo;
-  $('webhook').value = S.discordWebhook || '';
+  renderHooks();
   $('flagsToDiscord').checked = !!S.flagsToDiscord;
   $('autoClipFlags').checked = !!S.autoClipFlags;
   $('notifyFlags').checked = !!S.notifyFlags;
@@ -561,12 +561,45 @@ function renderLogPaths() {
 document.querySelectorAll('input[name=after]').forEach((r) => r.addEventListener('change', () => set({ afterCapture: r.value })));
 $('uploadTo').addEventListener('change', () => {
   set({ uploadTo: $('uploadTo').value });
-  if (/discord|both/.test($('uploadTo').value) && !S.discordWebhook) toast('Add a Discord webhook link below so it knows which channel to post in');
+  if (/discord|both/.test($('uploadTo').value) && !S.activeWebhook) toast('Add or pick a Discord channel below so it knows where to post');
 });
-$('saveWebhook').addEventListener('click', () => { set({ discordWebhook: $('webhook').value.trim() }); toast('Saved'); });
-$('testWebhook').addEventListener('click', async () => {
-  set({ discordWebhook: $('webhook').value.trim() });
-  try { await ipcRenderer.invoke('test-discord'); toast('Test message sent – check the channel'); } catch (e) { toast(String(e.message).replace(/^Error invoking remote method '[\w-]+': (Error: )?/, '')); }
+// Discord channels: several saved, one in use
+function renderHooks() {
+  const box = $('hookList');
+  box.textContent = '';
+  const hooks = S.webhooks || [];
+  const radio = (id, label, sub) => {
+    const r = el('input', { type: 'radio', name: 'hook' });
+    r.checked = (S.activeWebhook || '') === id;
+    r.addEventListener('change', () => { set({ activeWebhook: id }); toast(id ? 'Posting to ' + label : 'Not posting to Discord'); });
+    return el('label', { style: 'flex:1;min-width:0' }, r, el('span', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' },
+      el('b', { style: 'color:var(--on)', text: label }), sub ? el('span', { class: 'note', text: '  ' + sub }) : null));
+  };
+  box.append(el('div', { class: 'row', style: 'padding:4px 0' }, radio('', 'None')));
+  for (const w of hooks) {
+    box.append(el('div', { class: 'row', style: 'padding:4px 0;border-top:1px solid var(--line)' },
+      radio(w.id, w.name, w.server ? '\u2194 ' + w.server : ''),
+      el('button', { class: 'small', text: 'Test', onclick: async () => {
+        try { await ipcRenderer.invoke('test-discord', w.id); toast('Test message sent to ' + w.name); } catch (e) { toast(cleanErr(e)); }
+      } }),
+      el('button', { class: 'small danger', text: '\u2715', title: 'Remove', onclick: (e) => {
+        const b = e.currentTarget;
+        if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = 'Remove?'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = '\u2715'; } }, 3000); return; }
+        set({ webhooks: hooks.filter((x) => x.id !== w.id), ...(S.activeWebhook === w.id ? { activeWebhook: '' } : {}) });
+        renderHooks();
+      } })));
+  }
+}
+$('hookSave').addEventListener('click', () => {
+  const name = $('hookName').value.trim() || 'Discord ' + ((S.webhooks || []).length + 1);
+  const url = $('hookUrl').value.trim();
+  if (!/^https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[\w-]+/.test(url)) { toast('That doesn\'t look like a Discord webhook link'); return; }
+  const w = { id: 'w' + Date.now().toString(36), name, url, server: $('hookServer').value.trim().toLowerCase() };
+  set({ webhooks: [...(S.webhooks || []), w], activeWebhook: w.id });
+  $('hookName').value = ''; $('hookUrl').value = ''; $('hookServer').value = '';
+  $('hookAdd').open = false;
+  renderHooks();
+  toast('Added and selected ' + name + ' \u2013 press Test to check it');
 });
 for (const id of ['flagsToDiscord', 'autoClipFlags', 'notifyFlags', 'startup']) $(id).addEventListener('change', () => set({ [id]: $(id).checked }));
 $('folderLink').addEventListener('click', () => ipcRenderer.send('open-folder'));
@@ -604,7 +637,7 @@ document.querySelectorAll('.hotkey').forEach((h) => {
 });
 ipcRenderer.on('hotkeys-failed', (_e, list) => { $('hotkeyWarn').textContent = list.length ? 'Another app is already using: ' + list.join(', ') + '. Pick different keys.' : ''; });
 
-ipcRenderer.on('settings', (_e, s) => { S = s; });
+ipcRenderer.on('settings', (_e, s) => { const hookChanged = S.activeWebhook !== s.activeWebhook || (S.webhooks || []).length !== (s.webhooks || []).length; S = s; if (hookChanged) renderHooks(); });
 ipcRenderer.on('busy', (_e, msg) => { $('busy').textContent = msg; $('busy').classList.toggle('show', !!msg); });
 ipcRenderer.on('toast', (_e, msg) => toast(msg));
 

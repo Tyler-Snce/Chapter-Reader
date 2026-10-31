@@ -352,7 +352,7 @@ class CaptureService : Service() {
                 Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
         if (prefs.getBoolean("flagsToDiscord", false)) {
-            val hook = prefs.getString("webhook", "") ?: ""
+            val hook = Store.activeHook(this)?.url ?: ""
             if (Uploader.validWebhook(hook)) uploads.execute {
                 try {
                     Uploader.discord(this, hook, "", embed = JSONObject()

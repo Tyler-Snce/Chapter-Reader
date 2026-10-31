@@ -110,7 +110,7 @@ object Uploader {
         var link: String? = null
         if (to == "catbox" || to == "both" || to == "none") link = linkFor(ctx, uri, cap.name, cap.size)
         if (to == "discord" || to == "both") {
-            val hook = p.getString("webhook", "") ?: ""
+            val hook = Store.activeHook(ctx)?.url ?: throw Exception("no Discord channel is selected")
             val label = when (cap.kind) { "screenshot" -> "Screenshot"; "clip" -> "Clip"; else -> "Recording" }
             val head = if (flag != null) "**${flag.player ?: "?"}**: ${flag.message} (${flag.reasons.joinToString()})\n" else "$label from Staff Toolkit\n"
             val tooBig = cap.size > DISCORD_LIMIT

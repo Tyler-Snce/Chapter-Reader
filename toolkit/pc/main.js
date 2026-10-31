@@ -23,7 +23,8 @@ const DEFAULTS = {
   notifyFlags: true,
   rules: DEFAULT_RULES,
   logPaths: [],
-  discordWebhook: '',
+  webhooks: [],                // saved Discord channels: [{ id, name, url, server }]
+  activeWebhook: '',           // which one is used right now ('' = none)
   flagsToDiscord: false,
   uploadTo: 'catbox',          // 'catbox', 'discord', 'both' or 'none'
   afterCapture: 'upload',      // 'upload' (and copy the link) or 'save'
@@ -49,8 +50,22 @@ function loadSettings() {
   try {
     const s = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
     settings = { ...settings, ...s, audio: { ...DEFAULTS.audio, ...(s.audio || {}) }, hotkeys: { ...DEFAULTS.hotkeys, ...(s.hotkeys || {}) }, rules: { ...DEFAULT_RULES, ...(s.rules || {}) } };
+    // Older versions kept a single webhook
+    if (s.discordWebhook && !(settings.webhooks || []).length) {
+      const id = 'w' + Date.now().toString(36);
+      settings.webhooks = [{ id, name: 'My Discord', url: s.discordWebhook, server: '' }];
+      settings.activeWebhook = id;
+    }
+    delete settings.discordWebhook;
   } catch (_) {}
 }
+/** The Discord webhook in use right now ('' if none). */
+function webhookUrl() {
+  const w = (settings.webhooks || []).find((x) => x.id === settings.activeWebhook);
+  return w ? w.url : '';
+}
+const webhookName = () => ((settings.webhooks || []).find((x) => x.id === settings.activeWebhook) || {}).name || '';
+
 function saveSettings() {
   try { fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2)); } catch (_) {}
 }
@@ -149,6 +164,10 @@ function updateTray() {
     { label: (rec ? 'Stop recording' : 'Start recording') + '\t' + settings.hotkeys.record, click: () => send('rec', 'toggle') },
     { label: 'Replay buffer', type: 'checkbox', checked: !!settings.replayOn, click: (i) => setSettings({ replayOn: i.checked }) },
     { label: 'Watch chat', type: 'checkbox', checked: !!settings.watcherOn, click: (i) => setSettings({ watcherOn: i.checked }) },
+    { label: 'Discord channel' + (webhookName() ? ': ' + webhookName() : ''), submenu: [
+      { label: 'None', type: 'radio', checked: !settings.activeWebhook, click: () => setSettings({ activeWebhook: '' }) },
+      ...(settings.webhooks || []).map((w) => ({ label: w.name, type: 'radio', checked: w.id === settings.activeWebhook, click: () => setSettings({ activeWebhook: w.id }) })),
+    ] },
     { type: 'separator' },
     { label: 'Open captures folder', click: () => shell.openPath(folder()) },
     { label: 'Quit', click: () => { quitting = true; app.quit(); } },
@@ -201,7 +220,7 @@ const watcher = new LogWatcher(
   () => settings.logPaths,
   (line) => {
     const srv = serverFromLog(line);
-    if (srv) { currentServer = srv; send('server', srv); return; }
+    if (srv) { currentServer = srv; send('server', srv); autoSwitchWebhook(srv); return; }
     const chat = chatFromLog(line);
     if (!chat) return;
     send('chat', { time: Date.now(), text: chat, server: currentServer });
@@ -211,6 +230,14 @@ const watcher = new LogWatcher(
   (s) => { watchStatus = { ...watchStatus, ...s }; send('watch-status', watchStatus); },
 );
 
+/** Joining a server that a Discord channel is linked to switches to that channel. */
+function autoSwitchWebhook(server) {
+  const w = (settings.webhooks || []).find((x) => x.server && (server === x.server.toLowerCase().trim() || server.endsWith('.' + x.server.toLowerCase().trim().replace(/^(play|mc|join)\./, ''))));
+  if (!w || w.id === settings.activeWebhook) return;
+  setSettings({ activeWebhook: w.id });
+  notify('Discord channel: ' + w.name, 'Switched because you joined ' + server);
+}
+
 function addFlag(hit) {
   const flag = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), time: Date.now(), ...hit, status: 'new' };
   flags.unshift(flag);
@@ -218,8 +245,8 @@ function addFlag(hit) {
   saveLists();
   send('flag', flag);
   if (settings.notifyFlags) notify(flag.reasons.join(', '), (flag.player ? flag.player + ': ' : '') + flag.message, () => showWindow('chat'));
-  if (settings.flagsToDiscord && settings.discordWebhook) {
-    upload.toDiscord(settings.discordWebhook, {
+  if (settings.flagsToDiscord && webhookUrl()) {
+    upload.toDiscord(webhookUrl(), {
       embed: {
         title: flag.reasons.join(', ').slice(0, 250),
         description: ('**' + (flag.player || 'Unknown') + '**: ' + flag.message).slice(0, 3900),
@@ -285,7 +312,8 @@ async function doUpload(item) {
       }
       const flag = item.flagId ? flags.find((f) => f.id === item.flagId) : null;
       const text = (flag ? '**' + (flag.player || '?') + '**: ' + flag.message + ' (' + flag.reasons.join(', ') + ')\n' : label + ' from Staff Toolkit\n') + (link || '');
-      const att = await upload.toDiscord(settings.discordWebhook, { content: text, file });
+      if (!webhookUrl()) throw new Error('no Discord channel is selected (Settings \u2192 Discord)');
+      const att = await upload.toDiscord(webhookUrl(), { content: text, file });
       link = link || att;
     }
     item.link = link;
@@ -557,8 +585,10 @@ ipcMain.on('delete-capture', (_e, { id, file }) => {
   if (file) fs.rm(file, { force: true }, () => {});
   saveLists();
 });
-ipcMain.handle('test-discord', async () => {
-  await upload.toDiscord(settings.discordWebhook, { content: 'Staff Toolkit is connected to this channel.' });
+ipcMain.handle('test-discord', async (_e, id) => {
+  const w = (settings.webhooks || []).find((x) => x.id === (id || settings.activeWebhook));
+  if (!w) throw new Error('no Discord channel selected');
+  await upload.toDiscord(w.url, { content: 'Staff Toolkit is connected to this channel (' + w.name + ').' });
   return true;
 });
 
