@@ -40,12 +40,26 @@ jobs:
           Compress-Archive -Path "$tmp\*" -DestinationPath "$mods\optifine-renamed.zip" -Force
           Move-Item "$mods\optifine-renamed.zip" "$mods\optifine-renamed.jar" -Force
           Set-Content (Join-Path $env:USERPROFILE 'Downloads\vape-lite.exe') 'x'
+          # A fake injector hidden as "MC ADDON" (a program with no file type that hooks Java)
+          $fake = [byte[]](@(0x4D,0x5A) + (1..2000 | ForEach-Object { 0 })) + [Text.Encoding]::ASCII.GetBytes('JNI_GetCreatedJavaVMs javaw.exe') + [byte[]](1..2000 | ForEach-Object { 0 })
+          [IO.File]::WriteAllBytes((Join-Path $env:USERPROFILE 'Documents\MC ADDON'), $fake)
+          # A scrambled Lunar-style game file with short class names like fly/esp/reach: must NOT be flagged
+          $lunar = Join-Path $env:USERPROFILE '.lunarclient\offline\multiver'
+          New-Item -ItemType Directory -Force -Path $lunar | Out-Null
+          $lt = Join-Path $env:RUNNER_TEMP 'lunarjar'
+          New-Item -ItemType Directory -Force -Path "$lt\x" | Out-Null
+          foreach ($c in 'fly','esp','reach','aa','ab','ac') { Set-Content "$lt\x\$c.class" 'x' }
+          Compress-Archive -Path "$lt\*" -DestinationPath "$lunar\lunar-prod.zip" -Force
+          Move-Item "$lunar\lunar-prod.zip" "$lunar\lunar-prod.jar" -Force
           $exe = (Resolve-Path out\StaffToolkit-Scan.exe).Path
           $p = Start-Process -FilePath $exe -ArgumentList '--test', "$env:RUNNER_TEMP\scan.json" -Wait -PassThru
           Get-Content "$env:RUNNER_TEMP\scan.txt" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
           $t = Get-Content "$env:RUNNER_TEMP\scan.txt" -Raw
           if ($t -notmatch 'cheat features') { throw 'fake cheat mod not detected' }
           if ($t -notmatch 'vape') { throw 'fake cheat download not detected' }
+          if ($t -notmatch 'disguised as a file with no type: MC ADDON') { throw 'disguised MC ADDON program not detected' }
+          if ($t -notmatch 'attach to a running Java game') { throw 'Java injector code not detected' }
+          if ($t -match 'lunar-prod') { throw 'Lunar game file wrongly flagged' }
           # The upload path Staff Toolkit reads from: send, read back, delete
           $url = 'https://chapter-reader-default-rtdb.europe-west1.firebasedatabase.app/progress/ss-CITEST.json'
           try {

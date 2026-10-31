@@ -116,6 +116,7 @@ namespace StaffToolkitScan
             Step("Looking at running games", ScanGames);
             Step("Checking mods and client folders", ScanFolders);
             Step("Checking running programs", ScanProcesses);
+            Step("Looking for hidden or disguised programs", ScanFiles);
             Step("Checking recent activity", ScanRecent);
             Step("Looking for signs of cleaning", ScanCleaning);
             if (admin) Step("Deep check (administrator)", ScanDeep);
@@ -349,13 +350,32 @@ namespace StaffToolkitScan
                 using (var zip = ZipFile.OpenRead(file))
                 {
                     var hits = new HashSet<string>();
+                    var inModuleDirs = new HashSet<string>();
                     string modName = null;
+                    // The clients' own game files are scrambled (thousands of tiny class names) and are
+                    // known-good, so only mods the player added are checked for cheat features
+                    var lf = file.ToLowerInvariant();
+                    var official = Regex.IsMatch(lf, @"\\\.lunarclient\\(offline|jre|licenses|logs|textures)\\|\\badlion client\\|\\\.feather\\(libraries|game|jre)\\");
+                    var classes = zip.Entries.Where(e => e.FullName.EndsWith(".class", StringComparison.OrdinalIgnoreCase)).ToList();
+                    var shortNames = classes.Count(e => Path.GetFileNameWithoutExtension(e.Name).Length <= 3);
+                    var scrambled = classes.Count > 200 && shortNames > classes.Count * 0.4;
                     foreach (var e in zip.Entries)
                     {
                         var n = e.FullName.ToLowerInvariant();
-                        var leaf = Path.GetFileNameWithoutExtension(n).Replace("$", " ");
-                        foreach (var w in CheatClassWords)
-                            if (n.EndsWith(".class") && Regex.IsMatch(leaf, "^(module)?" + w + "(module|hack|feature)?$")) hits.Add(w);
+                        if (!official && n.EndsWith(".class"))
+                        {
+                            var leaf = Path.GetFileNameWithoutExtension(n).Split('$')[0];
+                            var dir = Path.GetDirectoryName(n.Replace('/', '\\')) ?? "";
+                            var moduleDir = Regex.IsMatch(dir, @"(^|\\)(modules?|features?|hacks?|cheats?|combat|movement)(\\|$)");
+                            if (scrambled && !moduleDir) continue;
+                            foreach (var w in CheatClassWords)
+                            {
+                                // Short words ("fly", "esp") only count when clearly labelled as a cheat module
+                                var labelled = Regex.IsMatch(leaf, "^(module)?" + w + "(module|hack|cheat)$") || Regex.IsMatch(leaf, "^module" + w + "$");
+                                var exact = leaf == w && (w.Length >= 6 || moduleDir);
+                                if (labelled || exact) { hits.Add(w); if (moduleDir) inModuleDirs.Add(w); }
+                            }
+                        }
                         if (n.EndsWith("fabric.mod.json") || n.EndsWith("mods.toml") || n.EndsWith("mcmod.info"))
                         {
                             using (var sr = new StreamReader(e.Open()))
@@ -368,9 +388,9 @@ namespace StaffToolkitScan
                             }
                         }
                     }
-                    // Several cheat features in one mod is a strong sign; one alone is often a normal mod (e.g. "fly" in a building mod)
-                    if (hits.Count >= 3) Add(Level.Serious, area, "Mod contains cheat features: " + (modName ?? Path.GetFileName(file)), Short(file) + "\nFeatures: " + string.Join(", ", hits));
-                    else if (hits.Count > 0) Add(Level.Suspicious, area, "Mod contains possible cheat features: " + (modName ?? Path.GetFileName(file)), Short(file) + "\nFeatures: " + string.Join(", ", hits));
+                    // Several cheat modules grouped together is a strong sign; one or two on their own are often normal mods
+                    if (hits.Count >= 3 && inModuleDirs.Count >= 2) Add(Level.Serious, area, "Mod contains cheat features: " + (modName ?? Path.GetFileName(file)), Short(file) + "\nFeatures: " + string.Join(", ", hits));
+                    else if (hits.Count >= 2) Add(Level.Suspicious, area, "Mod contains possible cheat features: " + (modName ?? Path.GetFileName(file)), Short(file) + "\nFeatures: " + string.Join(", ", hits));
                 }
                 using (var sha = SHA1.Create())
                 using (var s = File.OpenRead(file))
@@ -435,6 +455,146 @@ namespace StaffToolkitScan
         }
 
         static IEnumerable<string> SafeDirs(string d) { try { return Directory.GetDirectories(d); } catch { return new string[0]; } }
+
+        // ---------- hidden or disguised programs ----------
+        // Looks at what files really are, not what they're called: a cheat renamed to "MC ADDON"
+        // or "notes.txt" is still a program, and Java injectors contain the code to hook a running game.
+
+        static readonly HashSet<string> ProgramExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            ".exe", ".dll", ".sys", ".ocx", ".cpl", ".scr", ".com", ".efi", ".mui", ".ax", ".drv", ".node", ".pyd", ".winmd", ".tlb",
+            ".bin", ".dat", ".tmp", ".msi", ".msp", ".mun", ".acm", ".tsp", ".ime", ".rll", ".fon", ".olb", ".xll", ".asi", ".api",
+            ".bpl", ".vst3", ".aex", ".8bf", ".flt", ".old", ".bak", ".partial", ".crdownload", ".download", ".pdb" };
+        static readonly string[] PackerSections = { ".vmp0", ".vmp1", ".vmp2", ".themida", ".winlice", ".enigma1", ".enigma2", ".obsidium", ".boot\0" };
+
+        IEnumerable<Tuple<string, int>> FileRoots()
+        {
+            var list = new List<Tuple<string, int>>();
+            foreach (var d in new[] { "Desktop", "Downloads", "Documents", "Videos", "Pictures", "Music" }) list.Add(Tuple.Create(Path.Combine(Home, d), 6));
+            foreach (var d in SafeDirs(Home)) if (Path.GetFileName(d).StartsWith("OneDrive", StringComparison.OrdinalIgnoreCase)) list.Add(Tuple.Create(d, 6));
+            list.Add(Tuple.Create(Home, 1));
+            list.Add(Tuple.Create(AppData, 4));
+            list.Add(Tuple.Create(LocalAppData, 3));
+            list.Add(Tuple.Create(Path.GetTempPath(), 2));
+            foreach (var drive in DriveInfo.GetDrives().Where(x => x.DriveType == DriveType.Fixed || x.DriveType == DriveType.Removable))
+                list.Add(Tuple.Create(drive.RootDirectory.FullName, drive.RootDirectory.FullName.StartsWith(Path.GetPathRoot(Win), StringComparison.OrdinalIgnoreCase) ? 2 : 3));
+            return list.Where(t => Directory.Exists(t.Item1));
+        }
+
+        static readonly Regex SkipDirs = new Regex(@"^(windows|program files( \(x86\))?|programdata|\$recycle\.bin|system volume information|steamapps|steamlibrary|xboxgames|windowsapps|node_modules|\.git|packages|microsoft|google|mozilla|nvidia|amd|intel|code|npm|npm-cache|pip|\.nuget|\.gradle|\.m2|\.vscode|discord|spotify|steam|epic games|riot games|battle\.net|ubisoft|ea games|origin|jetbrains|adobe|zoom|teams|slack|obs-studio|crashdumps|d3dscache|cache|caches|temp\\low)$", RegexOptions.IgnoreCase);
+
+        void ScanFiles()
+        {
+            var watch = Stopwatch.StartNew();
+            int looked = 0;
+            var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var root in FileRoots())
+            {
+                var stack = new Stack<Tuple<string, int>>();
+                stack.Push(Tuple.Create(root.Item1, 0));
+                while (stack.Count > 0)
+                {
+                    if (watch.Elapsed.TotalSeconds > 60) { Add(Level.Info, "Files", "The file check stopped after 60 seconds (" + looked + " files checked)", "There are a lot of files; the most likely places were checked first."); return; }
+                    var cur = stack.Pop();
+                    if (!visited.Add(cur.Item1)) continue;
+                    string[] files = new string[0], dirs = new string[0];
+                    try { files = Directory.GetFiles(cur.Item1); } catch { }
+                    if (cur.Item2 < root.Item2) try { dirs = Directory.GetDirectories(cur.Item1); } catch { }
+                    foreach (var f in files) { looked++; CheckFile(f); }
+                    foreach (var d in dirs)
+                    {
+                        var name = Path.GetFileName(d);
+                        if (SkipDirs.IsMatch(name)) continue;
+                        try { if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) continue; } catch { continue; }
+                        stack.Push(Tuple.Create(d, cur.Item2 + 1));
+                    }
+                }
+            }
+            Add(Level.Info, "Files", "Checked " + looked + " files in user folders and drives for hidden programs");
+        }
+
+        void CheckFile(string f)
+        {
+            long size;
+            try { size = new FileInfo(f).Length; } catch { return; }
+            if (size < 1024 || size > 300L * 1024 * 1024) return;
+            var ext = Path.GetExtension(f);
+            var head = new byte[4];
+            try { using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) if (fs.Read(head, 0, 4) < 4) return; } catch { return; }
+            var isProgram = head[0] == 'M' && head[1] == 'Z';
+            var isZip = head[0] == 'P' && head[1] == 'K' && head[2] == 3 && head[3] == 4;
+            var lf = f.ToLowerInvariant();
+            var userFolder = Regex.IsMatch(lf, @"\\(desktop|downloads|documents|videos|pictures|music|onedrive[^\\]*)\\");
+            var when = "Modified " + Ago(File.GetLastWriteTime(f)) + ", " + (size / 1024) + " KB";
+
+            if (isProgram)
+            {
+                if (!ProgramExts.Contains(ext))
+                {
+                    // A program wearing a different name ("MC ADDON", "notes.txt", "pack.mcaddon"...)
+                    var lvl = userFolder || ext.Length == 0 ? Level.Serious : Level.Suspicious;
+                    Add(lvl, "Files", "A program disguised as " + (ext.Length == 0 ? "a file with no type" : "a " + ext + " file") + ": " + Path.GetFileName(f), Short(f) + "\n" + when);
+                    InspectProgram(f, size, true);
+                }
+                else if (ext.Equals(".exe", StringComparison.OrdinalIgnoreCase) || ext.Equals(".dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    var cheat = CheatMatch(Path.GetFileName(f));
+                    if (cheat != null) Add(Level.Serious, "Files", "Cheat-related program: " + Path.GetFileName(f) + " (" + cheat + ")", Short(f) + "\n" + when);
+                    InspectProgram(f, size, false);
+                }
+            }
+            else if (isZip)
+            {
+                if (ext.Equals(".jar", StringComparison.OrdinalIgnoreCase)) { if (seenFiles.Add(f)) InspectJar(f, "Files"); }
+                else if (!Regex.IsMatch(ext, @"^\.(zip|mcpack|mcaddon|mcworld|mctemplate|docx|xlsx|pptx|apk|aab|odt|ods|epub|nupkg|vsix|whl|xpi|crx|kmz|3mf|sketch|fig|ora|kra|zipx)$", RegexOptions.IgnoreCase) || Regex.IsMatch(ext, @"^\.(mcaddon|mcpack)$", RegexOptions.IgnoreCase))
+                {
+                    // A Java program (has .class files) hiding under another name
+                    try
+                    {
+                        using (var zip = ZipFile.OpenRead(f))
+                            if (zip.Entries.Any(e => e.FullName.EndsWith(".class", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                Add(Level.Serious, "Files", "A Java program disguised as " + (ext.Length == 0 ? "a file with no type" : "a " + ext + " file") + ": " + Path.GetFileName(f), Short(f) + "\n" + when);
+                                InspectJar(f, "Files");
+                            }
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        /** Looks inside a program for signs it's a Java cheat injector, or a protected unsigned loader. */
+        void InspectProgram(string f, long size, bool disguised)
+        {
+            if (size > 60L * 1024 * 1024) return;
+            var signer = Signer(f);
+            if (signer != null && !disguised) return;   // signed by a company: not a cheat loader
+            byte[] bytes;
+            try { using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) { bytes = new byte[fs.Length]; int got = 0; while (got < bytes.Length) { var n = fs.Read(bytes, got, bytes.Length - got); if (n <= 0) break; got += n; } } }
+            catch { return; }
+            var latin = Encoding.GetEncoding(28591).GetString(bytes);
+            var name = Path.GetFileName(f);
+            var lf = f.ToLowerInvariant();
+            var javaHome = Regex.IsMatch(lf, @"\\(java|jdk[^\\]*|jre[^\\]*|runtime|\.lunarclient|\.minecraft|feather|badlion)\\");
+            var when = "Modified " + Ago(File.GetLastWriteTime(f)) + (signer != null ? ", signed by " + signer : ", not signed");
+
+            // Known cheat names inside the file (also in UTF-16)
+            foreach (var marker in new[] { "vape.gg", "Vape Lite", "VapeLite", "vapeclient", "Vape V4", "manthe.dev", "drip.gg", "dripclient", "slinky.gg", "entropy.club", "raven b+", "doomsday client", "liquidbounce", "horion" })
+            {
+                if (latin.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0 || latin.IndexOf(Utf16(marker), StringComparison.OrdinalIgnoreCase) >= 0)
+                { Add(Level.Serious, "Files", "Cheat client found inside " + name + " (\u201c" + marker + "\u201d)", Short(f) + "\n" + when); return; }
+            }
+            // Code for attaching to an already-running Java game (how ghost clients like Vape inject)
+            if (!javaHome && latin.Contains("JNI_GetCreatedJavaVMs"))
+            { Add(Level.Serious, "Files", "Program built to attach to a running Java game: " + name, Short(f) + "\n" + when + "\nThis is how injected ghost clients work; normal programs very rarely do this."); return; }
+            // Classic DLL injection toolkit aimed at Java
+            if (latin.Contains("WriteProcessMemory") && latin.Contains("CreateRemoteThread") && (latin.IndexOf("javaw", StringComparison.OrdinalIgnoreCase) >= 0 || latin.IndexOf(Utf16("javaw"), StringComparison.OrdinalIgnoreCase) >= 0))
+            { Add(Level.Serious, "Files", "Injector aimed at Java/Minecraft: " + name, Short(f) + "\n" + when); return; }
+            // Wrapped in the copy-protection most cheat loaders use, and not signed by anyone
+            if (signer == null && PackerSections.Any(sec => latin.IndexOf(sec, 0, Math.Min(latin.Length, 4096), StringComparison.Ordinal) >= 0))
+                Add(Level.Suspicious, "Files", "Protected (packed) program with no publisher: " + name, Short(f) + "\n" + when + "\nCheat loaders are usually packed like this; some legitimate tools are too.");
+        }
+
+        static string Utf16(string s) => Encoding.GetEncoding(28591).GetString(Encoding.Unicode.GetBytes(s));
 
         // ---------- running programs ----------
 
