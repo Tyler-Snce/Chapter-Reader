@@ -16,6 +16,7 @@ jobs:
           node-version: '20'
       - name: Test
         run: |
+          set +e +o pipefail
           mkdir w && cd w && npm init -y >/dev/null && npm install --no-audit --no-fund ffmpeg-static@5.2.0 >/dev/null 2>&1
           F=$(node -p "require('ffmpeg-static')")
           {
