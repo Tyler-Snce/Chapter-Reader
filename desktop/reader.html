@@ -121,12 +121,8 @@
     </label>
     <label for="auto"><input type="checkbox" id="auto"> Go to the next chapter automatically</label>
     <label for="artPace">Artwork pace (manga)
-      <select id="artPace">
-        <option value="4">Slow: time to look at the pictures</option>
-        <option value="2.5">Normal</option>
-        <option value="1.5">Fast</option>
-        <option value="0">Off: jump between speech bubbles</option>
-      </select>
+      <input type="range" id="artPace" min="0" max="4" step="0.1" style="flex:1">
+      <span id="artPaceLabel" style="min-width:150px;color:var(--muted);font-variant-numeric:tabular-nums"></span>
     </label>
     <div class="row" id="syncRow">
       <input type="text" id="syncUser" placeholder="Sync name (same as your phone)">

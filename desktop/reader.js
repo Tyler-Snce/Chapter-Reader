@@ -498,12 +498,13 @@ function glideToBubble(i, my, fixedMs) {
     const target = start + o.getBoundingClientRect().top - (box.top + box.height / 3);
     const dist = target - start;
     if (Math.abs(dist) < 4) { resolve(); return; }
-    const pace = Number(settings.artPace ?? 2.5);
+    const pace = Number(settings.artPace ?? 1);
     let ms;
     if (fixedMs) ms = fixedMs;
     else if (!pace || dist < 0) ms = 350;
     else if (dist < box.height * 0.5) ms = 600;
-    else ms = Math.min(20000, (dist / box.height) * pace * 1000);
+    // Never spend more than 5 seconds on one stretch of artwork
+    else ms = Math.min(5000, (dist / box.height) * pace * 1000);
     const t0 = performance.now();
     text.style.scrollBehavior = 'auto';
     const ease = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
@@ -672,8 +673,15 @@ $('edgeVoice').addEventListener('change', (e) => {
   resetClips();
   if (st.playing && settings.engine === 'edge') speak();
 });
-$('artPace').addEventListener('change', (e) => {
-  settings.artPace = Number(e.target.value);
+function showPace() {
+  const v = Number($('artPace').value);
+  $('artPaceLabel').textContent = v === 0 ? 'Off (jump to each bubble)' : v.toFixed(1) + ' s per screen';
+}
+$('artPace').addEventListener('input', () => {
+  showPace();
+  settings.artPace = Number($('artPace').value);
+});
+$('artPace').addEventListener('change', () => {
   ipcRenderer.send('settings-set', { artPace: settings.artPace });
 });
 $('auto').addEventListener('change', (e) => {
@@ -707,7 +715,8 @@ ipcRenderer.invoke('settings-get').then((s) => {
   $('edgeVoice').value = settings.edgeVoice;
   $('auto').checked = settings.auto !== false;
   document.documentElement.style.setProperty('--text-size', (settings.textSize || 19) + 'px');
-  $('artPace').value = String(settings.artPace ?? 2.5);
+  $('artPace').value = String(settings.artPace ?? 1);
+  showPace();
   $('syncUser').value = settings.syncUser || '';
   $('syncPin').value = settings.syncPin || '';
   if (!syncOn()) $('syncRow').style.display = 'none';
