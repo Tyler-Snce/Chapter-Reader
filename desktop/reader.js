@@ -64,6 +64,7 @@ function setChapter(ch) {
   st.chapter = ch;
   st.items = [];
   mangaGen++;
+  seenEdgeText = new Map();
   pageUrls.forEach((u) => URL.revokeObjectURL(u));
   pageUrls = [];
   bubbles = [];
@@ -434,8 +435,25 @@ function tidy(raw) {
   return t;
 }
 
+// Site watermarks stamped on the pictures (e.g. "I ♥ MANGA") shouldn't be read out
+const WATERMARK_WORDS = /^(i\s*\S?\s*)?(love|luv|heart|<3|\u2665|\u2764|\u2661)?\s*(manga|manhwa|manhua|webtoons?|comics?|toon\w*|scans?)\s*(club|zone|world|online|hub|land)?$/i;
+let seenEdgeText = new Map();   // short text near a page edge -> which page it was first seen on
+
+function isWatermark(b) {
+  const key = b.text.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!key) return true;
+  if (WATERMARK_WORDS.test(b.text.replace(/[^\p{L}\p{N}<\u2665\u2764\u2661 ]/gu, '').trim())) return true;
+  if (key.length > 25) return false;
+  const nearEdge = b.y < 0.12 || b.y + b.h > 0.88 || b.x > 0.6 || b.x + b.w < 0.4;
+  if (!nearEdge) return false;
+  const first = seenEdgeText.get(key);
+  if (first === undefined) { seenEdgeText.set(key, b.img); return false; }
+  return first !== b.img;   // the same short text in a corner on another page: a stamp
+}
+
 function addBubbles(found) {
   const ch = st.chapter;
+  found = found.filter((b) => !isWatermark(b));
   for (const b of found) {
     const pi = ch.paras.length;
     ch.paras.push(b.text);

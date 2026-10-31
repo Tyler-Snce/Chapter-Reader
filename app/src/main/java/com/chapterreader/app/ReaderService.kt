@@ -411,6 +411,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     private fun startManga(ch: Chapter) {
         val myGen = ++mangaGen
+        seenEdgeText.clear()
         bubbles.clear(); bubbleTexts.clear(); mangaFiles.clear()
         repeat(ch.images.size) { mangaFiles.add(null) }
         mangaDone = false
@@ -456,7 +457,27 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun addBubbles(found: List<SpeechBubble>) {
+    // Site watermarks stamped on the pictures (e.g. "I ♥ MANGA") shouldn't be read out
+    private val watermarkWords = Regex(
+        "^(i\\s*\\S?\\s*)?(love|luv|heart|<3|\u2665|\u2764|\u2661)?\\s*(manga|manhwa|manhua|webtoons?|comics?|toon\\w*|scans?)\\s*(club|zone|world|online|hub|land)?$",
+        RegexOption.IGNORE_CASE
+    )
+    private val seenEdgeText = HashMap<String, Int>()
+
+    private fun isWatermark(b: SpeechBubble): Boolean {
+        val key = b.text.lowercase().replace(Regex("[^a-z0-9]"), "")
+        if (key.isEmpty()) return true
+        if (watermarkWords.matches(b.text.replace(Regex("[^\\p{L}\\p{N}<\u2665\u2764\u2661 ]"), "").trim())) return true
+        if (key.length > 25) return false
+        val nearEdge = b.y < 0.12f || b.y + b.h > 0.88f || b.x > 0.6f || b.x + b.w < 0.4f
+        if (!nearEdge) return false
+        val first = seenEdgeText[key]
+        if (first == null) { seenEdgeText[key] = b.img; return false }
+        return first != b.img   // the same short text in a corner on another page: a stamp
+    }
+
+    private fun addBubbles(all: List<SpeechBubble>) {
+        val found = all.filterNot { isWatermark(it) }
         for (b in found) {
             val pi = bubbleTexts.size
             bubbles.add(b)
