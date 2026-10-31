@@ -233,17 +233,28 @@ ipcMain.handle('image', async (_e, { url, referer }) => {
 });
 
 // Manga: read the text in a slice of a page, using Windows' built-in text recognition (offline).
-// One PowerShell helper stays running; each request is an image file path, each answer one JSON line.
+// One PowerShell helper stays running; requests and answers are matched by id. If it ever
+// gets stuck it is restarted, so one bad picture can't stop the rest of the chapter.
 let ocrProc = null;
 let ocrReady = null;
-let ocrQueue = [];
+let ocrJobs = new Map();
 let ocrBuf = '';
+let ocrNextId = 1;
 
 function withTimeout(promise, ms, what) {
   return Promise.race([
     promise,
     new Promise((_, reject) => setTimeout(() => reject(new Error(what + ' took too long')), ms)),
   ]);
+}
+
+function stopOcr(why) {
+  const p = ocrProc;
+  ocrProc = null; ocrReady = null; ocrBuf = '';
+  const err = new Error(why);
+  for (const j of ocrJobs.values()) j.reject(err);
+  ocrJobs = new Map();
+  try { p?.kill(); } catch (_) {}
 }
 
 function startOcr() {
@@ -254,6 +265,7 @@ function startOcr() {
     let started = false;
     p.stdout.setEncoding('utf8');
     p.stdout.on('data', (chunk) => {
+      if (p !== ocrProc) return;
       ocrBuf += chunk;
       let nl;
       while ((nl = ocrBuf.indexOf('\n')) >= 0) {
@@ -267,35 +279,40 @@ function startOcr() {
           if (msg.ready) resolve(); else reject(new Error(msg.error || 'Text recognition did not start'));
           continue;
         }
-        const job = ocrQueue.shift();
-        if (job) msg.error ? job.reject(new Error(msg.error)) : job.resolve(msg.lines || []);
+        const job = ocrJobs.get(String(msg.id));
+        if (!job) continue;
+        ocrJobs.delete(String(msg.id));
+        msg.error ? job.reject(new Error(msg.error)) : job.resolve(msg.lines || []);
       }
     });
     let errText = '';
     p.stderr.on('data', (d) => { errText += d; });
-    const fail = (why) => {
-      const err = new Error(why);
-      if (!started) { started = true; reject(err); }
-      ocrQueue.splice(0).forEach((j) => j.reject(err));
-      ocrProc = null; ocrReady = null; ocrBuf = '';
-    };
-    p.on('error', (e) => fail('Could not start Windows text recognition: ' + e.message));
-    p.on('exit', () => fail('Windows text recognition stopped. ' + errText.slice(-200)));
+    p.on('error', (e) => { if (!started) { started = true; reject(e); } if (p === ocrProc) stopOcr('Could not start Windows text recognition: ' + e.message); });
+    p.on('exit', () => {
+      if (!started) { started = true; reject(new Error('Windows text recognition stopped. ' + errText.slice(-200))); }
+      if (p === ocrProc) stopOcr('Windows text recognition stopped');
+    });
   });
   return ocrReady;
 }
 
 ipcMain.handle('ocr', async (_e, png) => {
   await withTimeout(startOcr(), 30000, 'Starting text recognition');
-  const file = path.join(os.tmpdir(), `chapter-reader-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+  const id = String(ocrNextId++);
+  const file = path.join(os.tmpdir(), `chapter-reader-ocr-${id}-${Math.random().toString(36).slice(2)}.png`);
   fs.writeFileSync(file, Buffer.from(png));
   try {
     const lines = await withTimeout(new Promise((resolve, reject) => {
-      ocrQueue.push({ resolve, reject });
-      ocrProc.stdin.write(file + '\n');
-    }), 45000, 'Reading a page');
+      ocrJobs.set(id, { resolve, reject });
+      ocrProc.stdin.write(id + '\t' + file + '\n');
+    }), 25000, 'Reading a page').catch((e) => {
+      // Stuck: restart the helper so the next pages work
+      if (/too long/.test(e.message)) stopOcr('restarting');
+      throw e;
+    });
     return lines.map((x) => ({ l: x.l, t: x.t, r: x.r, b: x.b, text: x.text, lineH: Math.max(1, x.b - x.t) }));
   } finally {
+    ocrJobs.delete(id);
     fs.unlink(file, () => {});
   }
 });

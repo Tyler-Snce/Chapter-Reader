@@ -35,8 +35,11 @@ try {
 }
 
 while ($null -ne ($line = [Console]::In.ReadLine())) {
-  $path = $line.Trim()
-  if (-not $path) { continue }
+  # Each request is "id<TAB>path"; the answer carries the same id
+  $parts = $line.Trim().Split("`t", 2)
+  if ($parts.Count -lt 2) { continue }
+  $id = $parts[0]
+  $path = $parts[1]
   try {
     $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($path)) ([Windows.Storage.StorageFile])
     $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
@@ -57,9 +60,9 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
     $stream.Dispose()
     $bitmap.Dispose()
-    ConvertTo-Json -Compress -Depth 4 -InputObject @{ lines = $lines.ToArray() }
+    ConvertTo-Json -Compress -Depth 4 -InputObject @{ id = $id; lines = $lines.ToArray() }
   } catch {
-    ConvertTo-Json -Compress -InputObject @{ error = $_.Exception.Message }
+    ConvertTo-Json -Compress -InputObject @{ id = $id; error = $_.Exception.Message }
   }
   [Console]::Out.Flush()
 }

@@ -59,7 +59,7 @@ jobs:
           $g.DrawString('SUSU BOYS HIGH SCHOOL', $font, [System.Drawing.Brushes]::Black, 20, 130)
           $img = Join-Path $env:RUNNER_TEMP 'ocr-test.png'
           $bmp.Save($img, [System.Drawing.Imaging.ImageFormat]::Png)
-          $out = $img | powershell.exe -NoProfile -ExecutionPolicy Bypass -File ocr.ps1 2>&1 | Out-String
+          $out = ("1`t" + $img) | powershell.exe -NoProfile -ExecutionPolicy Bypass -File ocr.ps1 2>&1 | Out-String
           Write-Output $out
           Add-Content -Path (Join-Path $env:RUNNER_TEMP 'build.log') -Value ("OCR TEST:`n" + $out)
 
