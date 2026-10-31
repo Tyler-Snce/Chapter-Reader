@@ -234,19 +234,38 @@ ipcMain.handle('image', async (_e, { url, referer }) => {
 
 // Manga: read the text in a slice of a page (offline text recognition)
 let ocrWorker = null;
+let ocrStarting = null;
+
+/** Files packed into the app can't be started as background workers, so use the unpacked copy. */
+function unpacked(p) {
+  return p.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+}
+
+function withTimeout(promise, ms, what) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(what + ' took too long')), ms)),
+  ]);
+}
+
 async function getOcr() {
   if (ocrWorker) return ocrWorker;
+  if (ocrStarting) return ocrStarting;
   const { createWorker } = require('tesseract.js');
-  ocrWorker = await createWorker('eng', 1, {
+  const workerPath = unpacked(path.join(path.dirname(require.resolve('tesseract.js')), 'worker-script', 'node', 'index.js'));
+  ocrStarting = withTimeout(createWorker('eng', 1, {
+    workerPath,
     langPath: res('tessdata'),
     cachePath: path.join(app.getPath('userData'), 'tessdata-cache'),
     gzip: true,
-  });
-  return ocrWorker;
+    errorHandler: (e) => console.error('OCR', e),
+  }), 60000, 'Starting text recognition').then((w) => { ocrWorker = w; return w; })
+    .catch((e) => { ocrStarting = null; throw e; });
+  return ocrStarting;
 }
 ipcMain.handle('ocr', async (_e, png) => {
   const worker = await getOcr();
-  const { data } = await worker.recognize(Buffer.from(png), {}, { blocks: true, text: false });
+  const { data } = await withTimeout(worker.recognize(Buffer.from(png), {}, { blocks: true, text: false }), 45000, 'Reading a page');
   const out = [];
   for (const b of data.blocks || []) {
     for (const p of b.paragraphs || []) {

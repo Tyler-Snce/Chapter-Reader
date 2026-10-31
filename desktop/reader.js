@@ -301,20 +301,48 @@ async function startManga(ch) {
   const gen = mangaGen;
   mangaDone = false;
   waitingText = false;
+  // Download and show the pictures on their own (a few at a time), ahead of the text reading
+  const pages = new Array(ch.images.length);
+  let nextDownload = 0;
+  const downloadOne = async () => {
+    while (nextDownload < ch.images.length && gen === mangaGen) {
+      const i = nextDownload++;
+      pages[i] = ipcRenderer.invoke('image', { url: ch.images[i], referer: ch.url })
+        .then((r) => {
+          const blob = new Blob([r.data], { type: r.mime });
+          if (gen !== mangaGen) return null;
+          const url = URL.createObjectURL(blob);
+          pageUrls[i] = url;
+          const d = pageEls[i];
+          if (d) { const w = d.querySelector('.wait'); if (w) w.remove(); const im = document.createElement('img'); im.src = url; d.insertBefore(im, d.firstChild); }
+          push();
+          return blob;
+        })
+        .catch(() => {
+          const d = pageEls[i];
+          if (d) { const w = d.querySelector('.wait'); if (w) w.textContent = "This picture couldn't be loaded"; }
+          return null;
+        });
+      await pages[i];
+    }
+  };
+  for (let k = 0; k < 4; k++) downloadOne();
+
+  let ocrError = '';
   for (let i = 0; i < ch.images.length; i++) {
     if (gen !== mangaGen) return;
-    let blob;
-    try {
-      const r = await ipcRenderer.invoke('image', { url: ch.images[i], referer: ch.url });
-      blob = new Blob([r.data], { type: r.mime });
-    } catch (_) { continue; }
+    while (!pages[i] && gen === mangaGen) await new Promise((r) => setTimeout(r, 100));
+    const blob = await pages[i];
     if (gen !== mangaGen) return;
-    const url = URL.createObjectURL(blob);
-    pageUrls[i] = url;
-    const d = pageEls[i];
-    if (d) { d.innerHTML = ''; const im = document.createElement('img'); im.src = url; d.appendChild(im); }
+    if (!blob) continue;
     let found = [];
-    try { found = await readPage(blob, i); } catch (e) { console.warn('OCR failed', e); }
+    try {
+      found = await readPage(blob, i);
+    } catch (e) {
+      const msg = String(e.message || e).replace(/^Error invoking remote method '\w+': (Error: )?/, '');
+      console.warn('OCR failed', msg);
+      if (msg !== ocrError) { ocrError = msg; setStatus('Text recognition problem: ' + msg); }
+    }
     if (gen !== mangaGen) return;
     addBubbles(found);
     push();
