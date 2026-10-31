@@ -80,6 +80,10 @@ class MainActivity : Activity(), ReaderService.Listener {
             }
         }
         top.addView(urlBar, LinearLayout.LayoutParams(0, px(42), 1f))
+        top.addView(button("\uD83D\uDCDA") { showLibrary() }.apply {
+            textSize = 18f
+            contentDescription = "Library: your saved manga and novels"
+        }, LinearLayout.LayoutParams(px(48), px(42)).apply { marginStart = px(6) })
         top.addView(button("Read", ACCENT) { readThisPage() }, LinearLayout.LayoutParams(px(72), px(42)).apply {
             marginStart = px(6)
         })
@@ -291,6 +295,66 @@ class MainActivity : Activity(), ReaderService.Listener {
             return
         }
         if (s?.chapter != null && sameUrl(web.url, s.chapter?.url)) s.toggle() else readThisPage()
+    }
+
+    /** Your saved place in each manga and novel; tap one to carry on with it. */
+    private fun showLibrary() {
+        // Fetch saves made on the PC first, then show the list
+        Thread {
+            Sync.pull(prefs)
+            runOnUiThread { if (!isFinishing) openLibrary() }
+        }.start()
+    }
+
+    private fun openLibrary() {
+        val entries = Library.list(prefs)
+        if (entries.isEmpty()) {
+            Toast.makeText(this, "Nothing saved yet. Start reading something and it's saved here automatically.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val labels = entries.map { e ->
+            val kind = if (e.manga) "\uD83D\uDDBC Manga" else "\uD83D\uDCD6 Novel"
+            "${e.series}\n$kind \u00b7 ${e.title} \u00b7 ${Library.ago(e.updated)}"
+        }.toTypedArray()
+        val dialog = android.app.AlertDialog.Builder(this)
+            .setTitle("Library")
+            .setItems(labels) { _, which -> openSave(entries[which]) }
+            .setNegativeButton("Close", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.listView.setOnItemLongClickListener { _, _, which, _ ->
+                val e = entries[which]
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Remove from library?")
+                    .setMessage(e.series)
+                    .setPositiveButton("Remove") { _, _ ->
+                        Library.remove(prefs, e.id)
+                        Thread { Sync.push(prefs) }.start()
+                        dialog.dismiss()
+                        openLibrary()
+                    }
+                    .setNegativeButton("Keep", null)
+                    .show()
+                true
+            }
+        }
+        dialog.show()
+        val tips = prefs.getInt("libraryTips", 0)
+        if (tips < 3) {
+            prefs.edit().putInt("libraryTips", tips + 1).apply()
+            Toast.makeText(this, "Tip: press and hold one to remove it", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openSave(e: Library.Entry) {
+        maybeAskOverlay()
+        web.loadUrl(e.url)
+        startForegroundService(
+            Intent(this, ReaderService::class.java)
+                .setAction(ReaderService.ACTION_LOAD_URL)
+                .putExtra(ReaderService.EXTRA_URL, e.url)
+                .putExtra(ReaderService.EXTRA_PARA, e.para)
+        )
     }
 
     private fun readThisPage() {

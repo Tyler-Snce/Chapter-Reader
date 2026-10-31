@@ -68,6 +68,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_SHOW_BUBBLE = "com.chapterreader.SHOW_BUBBLE"
         const val EXTRA_URL = "url"
         const val EXTRA_PLAY = "play"
+        const val EXTRA_PARA = "para"
 
         private const val CHANNEL = "reader"
         private const val NOTIF_ID = 1
@@ -260,7 +261,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                     if (intent.getBooleanExtra(EXTRA_PLAY, false)) play()
                 }
             }
-            ACTION_LOAD_URL -> loadChapter(intent.getStringExtra(EXTRA_URL), true)
+            ACTION_LOAD_URL -> loadChapter(intent.getStringExtra(EXTRA_URL), true, intent.getIntExtra(EXTRA_PARA, 0))
             ACTION_IDLE -> notifyState()
             ACTION_RESUME -> resume()
             ACTION_SHOW_BUBBLE -> showBubble()
@@ -611,6 +612,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             .putString("resumeTitle", chapterName)
             .putLong("resumeUpdated", System.currentTimeMillis())
             .apply()
+        // Each series (manga or novel) keeps its own place, so you can switch between them
+        Library.record(prefs, c.url, c.title, chapterName, p, c.isManga)
         // Upload a few seconds later, so it isn't sent for every single paragraph
         handler.removeCallbacks(uploadNow)
         handler.postDelayed(uploadNow, 4000)

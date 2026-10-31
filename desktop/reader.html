@@ -63,6 +63,17 @@
   #settings select { flex: 1; min-height: 36px; padding: 0 8px; }
   #settings input[type=text] { flex: 1; min-height: 36px; padding: 0 10px; }
   .note { color: var(--muted); font-size: 12px; }
+  #library { display: none; flex-shrink: 0; background: var(--panel); border-top: 1px solid #2c2834; max-height: 45vh; overflow-y: auto; padding: 8px; }
+  #library.show { display: block; }
+  .libHead { display: flex; align-items: center; gap: 10px; padding: 2px 4px 8px; color: var(--text-on); }
+  .libHead .note { flex: 1; }
+  .libHead button { flex: 0 0 40px; min-height: 36px; }
+  .libRow { display: flex; gap: 6px; margin-bottom: 6px; }
+  .libOpen { flex: 1; text-align: left; padding: 8px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .libOpen b { color: var(--text-on); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .libOpen small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .libDel { flex: 0 0 auto; min-width: 46px; color: var(--muted); }
+  .libDel.armed { background: #8a2c3a; color: #fff; }
   @media (prefers-reduced-motion: reduce) { main { scroll-behavior: auto; } #bar i { transition: none; } }
 </style>
 </head>
@@ -82,6 +93,10 @@
   </div>
 </main>
 
+<div id="library">
+  <div class="libHead"><b>Library</b><span class="note">Your place in each manga and novel</span><button id="libClose" aria-label="Close library">&#10005;</button></div>
+  <div id="libraryList"></div>
+</div>
 <div id="caption"></div>
 <footer>
   <div class="row">
@@ -98,6 +113,7 @@
     <button id="smaller" title="Smaller text">A&minus;</button>
     <button id="bigger" title="Bigger text">A+</button>
     <button id="follow" title="Jump back to what's being read" style="flex:1.5">&#9678; Follow</button>
+    <button id="libBtn" title="Library: your saved manga and novels" style="flex:0 0 46px">&#128218;</button>
     <button id="gear" title="Settings" style="flex:0 0 46px">&#9881;</button>
   </div>
   <div id="settings">

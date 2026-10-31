@@ -30,26 +30,29 @@ object Sync {
 
     private fun url(key: String) = "${DB.trimEnd('/')}/progress/$key.json"
 
-    /** Uploads progress. Call from a background thread. */
+    /** Uploads progress, and your saves for each series. Call from a background thread. */
     fun push(prefs: SharedPreferences) {
         if (!configured) return
         val key = key(prefs) ?: return
         val link = prefs.getString("resumeUrl", null) ?: return
+        // Take in the other device's newest saves first, so they aren't overwritten
+        pull(prefs)
         val body = JSONObject()
             .put("url", link)
             .put("para", prefs.getInt("resumePara", 0))
             .put("title", prefs.getString("resumeTitle", "") ?: "")
             .put("updated", prefs.getLong("resumeUpdated", System.currentTimeMillis()))
             .put("device", "phone")
-            .toString()
+        for ((id, e) in Library.load(prefs)) body.put("library/$id", e.toJson())
         try {
             val c = URL(url(key)).openConnection() as HttpURLConnection
-            c.requestMethod = "PUT"
+            c.requestMethod = "POST"
+            c.setRequestProperty("X-HTTP-Method-Override", "PATCH")
             c.connectTimeout = 8000
             c.readTimeout = 8000
             c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
-            c.outputStream.use { it.write(body.toByteArray()) }
+            c.outputStream.use { it.write(body.toString().toByteArray()) }
             c.responseCode
             c.disconnect()
         } catch (_: Exception) {}
@@ -71,8 +74,9 @@ object Sync {
             c.disconnect()
             if (text.isBlank() || text == "null") return false
             val o = JSONObject(text)
+            val libChanged = Library.merge(prefs, o.optJSONObject("library"))
             val updated = o.optLong("updated", 0)
-            if (updated <= prefs.getLong("resumeUpdated", 0)) return false
+            if (!o.has("url") || updated <= prefs.getLong("resumeUpdated", 0)) return libChanged
             prefs.edit()
                 .putString("resumeUrl", o.getString("url"))
                 .putInt("resumePara", o.optInt("para", 0))

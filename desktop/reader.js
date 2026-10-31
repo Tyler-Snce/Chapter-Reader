@@ -17,14 +17,64 @@ function syncKey() {
 }
 const syncUrl = (k) => SYNC_DB.replace(/\/$/, '') + '/progress/' + k + '.json';
 
+// ---------- library: one saved place per manga / novel ----------
+
+const CHAPTER_WORD = /\b(chapter|chap|ch|episode|ep|part|vol|volume)\b\.?\s*\d/i;
+const CHAPTER_SLUG = /[-_]*(chapter|chap|ch|episode|ep|part)[-_]?\d.*$/i;
+
+/** Works out which series a chapter belongs to: an id to save it under, and a name to show. */
+function seriesOf(url, pageTitle) {
+  let host = '', segs = [];
+  try { const u = new URL(url); host = u.hostname.toLowerCase().replace(/^(www|m)\./, ''); segs = u.pathname.split('/').filter(Boolean); } catch (_) {}
+  // Drop the chapter part of the address: ".../chapter-12", ".../12.html", "name-chapter-12"
+  const at = segs.findIndex((x) => /^(chapters?|chap|episodes?|ep|read)$/i.test(x));
+  if (at > 0) segs = segs.slice(0, at);
+  else if (segs.length) {
+    const last = segs[segs.length - 1];
+    const cut = last.replace(CHAPTER_SLUG, '');
+    if (/^\d+(\.\w+)?$/.test(last) || cut.length < 3) segs.pop();
+    else segs[segs.length - 1] = cut;
+  }
+  const slug = segs[segs.length - 1] || '';
+  const id = (host + '_' + segs.join('_')).toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 120) || 'page';
+  let name = '';
+  const m = CHAPTER_WORD.exec(pageTitle || '');
+  if (m) name = pageTitle.slice(0, m.index).trim().replace(/[\s\-–—:|,·]+$/, '');
+  if (name.length < 3) name = slug.replace(/\.\w+$/, '').replace(/[-_]+/g, ' ').trim().replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+  return { id, name: name || pageTitle || host };
+}
+
+function library() { return settings.library || (settings.library = {}); }
+function saveLibrary() { ipcRenderer.send('settings-set', { library: library() }); }
+
+function recordSeries(url, pageTitle, title, para, manga) {
+  const { id, name } = seriesOf(url, pageTitle);
+  library()[id] = { series: name, url, para, title, updated: Date.now(), manga: !!manga, deleted: false };
+  saveLibrary();
+}
+
+/** Takes in saves from the other device, keeping whichever is newer. */
+function mergeLibrary(remote) {
+  if (!remote || typeof remote !== 'object') return false;
+  const lib = library();
+  let changed = false;
+  for (const [k, r] of Object.entries(remote)) {
+    if (!r || typeof r !== 'object') continue;
+    if (!lib[k] || (r.updated || 0) > (lib[k].updated || 0)) { lib[k] = r; changed = true; }
+  }
+  if (changed) saveLibrary();
+  return changed;
+}
+
 async function syncPush() {
   const k = syncKey(); const r = settings.resume;
   if (!syncOn() || !k || !r || !r.url) return;
+  // Take in the other device's newest saves first, so they aren't overwritten
+  await syncPull();
+  const body = { url: r.url, para: r.para || 0, title: r.title || '', updated: r.updated || Date.now(), device: 'pc' };
+  for (const [id, e] of Object.entries(library())) body['library/' + id] = e;
   try {
-    await fetch(syncUrl(k), {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: r.url, para: r.para || 0, title: r.title || '', updated: r.updated || Date.now(), device: 'pc' }),
-    });
+    await fetch(syncUrl(k), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   } catch (_) {}
 }
 
@@ -35,13 +85,80 @@ async function syncPull() {
   try {
     const r = await fetch(syncUrl(k));
     const o = await r.json();
-    if (!o || !o.url) return false;
-    if ((o.updated || 0) <= ((settings.resume && settings.resume.updated) || 0)) return false;
+    if (!o) return false;
+    const libChanged = mergeLibrary(o.library);
+    if (libChanged) showLibraryList();
+    if (!o.url) return libChanged;
+    if ((o.updated || 0) <= ((settings.resume && settings.resume.updated) || 0)) return libChanged;
     settings.resume = { url: o.url, para: o.para || 0, title: o.title || '', updated: o.updated };
     ipcRenderer.send('settings-set', { resume: settings.resume });
     return true;
   } catch (_) { return false; }
 }
+
+function ago(t) {
+  const s = (Date.now() - t) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + ' min ago';
+  if (s < 86400) return Math.floor(s / 3600) + ' h ago';
+  if (s < 86400 * 30) return Math.floor(s / 86400) + ' days ago';
+  return Math.floor(s / (86400 * 30)) + ' months ago';
+}
+
+/** The library panel: tap a save to carry on with it. */
+function showLibraryList() {
+  const list = document.getElementById('libraryList');
+  if (!list) return;
+  const entries = Object.entries(library()).filter(([, e]) => e && !e.deleted && e.url)
+    .sort((a, b) => (b[1].updated || 0) - (a[1].updated || 0));
+  list.textContent = '';
+  if (!entries.length) {
+    const p = document.createElement('div');
+    p.className = 'note';
+    p.textContent = "Nothing saved yet. Start reading something and it's saved here automatically.";
+    list.appendChild(p);
+    return;
+  }
+  for (const [id, e] of entries) {
+    const row = document.createElement('div');
+    row.className = 'libRow';
+    const open = document.createElement('button');
+    open.className = 'libOpen';
+    const name = document.createElement('b'); name.textContent = e.series;
+    const info = document.createElement('small');
+    info.textContent = (e.manga ? '\u{1F5BC} Manga' : '\u{1F4D6} Novel') + ' · ' + (e.title || '') + ' · ' + ago(e.updated || 0);
+    open.append(name, info);
+    open.addEventListener('click', () => {
+      $('library').classList.remove('show');
+      loadChapter(e.url, true, e.para || 0);
+    });
+    const del = document.createElement('button');
+    del.className = 'libDel';
+    del.title = 'Remove from library';
+    del.setAttribute('aria-label', 'Remove ' + e.series + ' from library');
+    del.textContent = '✕';
+    del.addEventListener('click', () => {
+      if (!confirmDelete(del)) return;
+      library()[id] = { ...e, deleted: true, updated: Date.now() };
+      saveLibrary();
+      showLibraryList();
+      syncPush();
+    });
+    row.append(open, del);
+    list.appendChild(row);
+  }
+}
+
+// Removing needs a second click (no pop-up windows), so a slip doesn't lose a save
+function confirmDelete(btn) {
+  if (btn.dataset.armed) return true;
+  btn.dataset.armed = '1';
+  btn.textContent = 'Remove?';
+  btn.classList.add('armed');
+  setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = '✕'; btn.classList.remove('armed'); } }, 3000);
+  return false;
+}
+
 let pushTimer = null;
 
 let settings = { engine: 'piper', edgeVoice: 'en-GB-SoniaNeural', rate: 1, auto: true, textSize: 19 };
@@ -156,6 +273,8 @@ function saveProgress() {
   const title = st.chapter.heading || st.chapter.title;
   settings.resume = { url: st.chapter.url, para: p, title, updated: Date.now() };
   ipcRenderer.send('settings-set', { resume: settings.resume });
+  // Each series (manga or novel) keeps its own place, so you can switch between them
+  recordSeries(st.chapter.url, st.chapter.title || '', title, p, isManga());
   clearTimeout(pushTimer);
   pushTimer = setTimeout(syncPush, 4000);
 }
@@ -878,6 +997,12 @@ $('follow').addEventListener('click', () => {
   if (el) el.scrollIntoView({ block: 'center' });
 });
 $('gear').addEventListener('click', () => $('settings').classList.toggle('show'));
+$('libBtn').addEventListener('click', () => {
+  const show = !$('library').classList.contains('show');
+  $('library').classList.toggle('show', show);
+  if (show) { showLibraryList(); syncPull(); }
+});
+$('libClose').addEventListener('click', () => $('library').classList.remove('show'));
 
 $('engine').addEventListener('change', (e) => {
   settings.engine = e.target.value;
