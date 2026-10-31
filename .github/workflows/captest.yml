@@ -1,0 +1,31 @@
+name: Capture test
+on:
+  push:
+    branches: [captest]
+permissions:
+  contents: write
+jobs:
+  t:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+      - name: Test
+        run: |
+          mkdir w && cd w && npm init -y >/dev/null && npm install --no-audit --no-fund ffmpeg-static@5.2.0 >/dev/null 2>&1
+          F=$(node -p "require('ffmpeg-static')")
+          {
+          echo "== version"; "$F" -hide_banner -version | head -3
+          echo "== ddagrab"; "$F" -hide_banner -filters 2>/dev/null | grep -i -E "ddagrab|hwdownload|d3d11" || echo "no ddagrab"
+          echo "== gdigrab"; "$F" -hide_banner -devices 2>/dev/null | grep -i -E "gdigrab|dshow"
+          echo "== encoders"; "$F" -hide_banner -encoders 2>/dev/null | grep -E "nvenc|amf|qsv|libx264"
+          echo "== try ddagrab"; "$F" -hide_banner -y -f lavfi -i "ddagrab=output_idx=0:framerate=30:draw_mouse=0" -t 2 -vf "hwdownload,format=bgra" -c:v libx264 -preset ultrafast dd.mp4 2>&1 | tail -4; ls -la dd.mp4 || true
+          echo "== try gdigrab"; "$F" -hide_banner -y -f gdigrab -draw_mouse 0 -framerate 30 -i desktop -t 2 -c:v libx264 -preset ultrafast gd.mp4 2>&1 | tail -3; ls -la gd.mp4 || true
+          echo "== try pcm pipe"; node -e "const {spawn}=require('child_process');const p=spawn(process.argv[1],['-hide_banner','-y','-f','s16le','-ar','48000','-ac','2','-i','pipe:0','-t','1','a.m4a']);const b=Buffer.alloc(48000*4);p.stdin.write(b);p.stdin.end();p.on('close',c=>console.log('pcm exit',c))" "$F"
+          } > out.txt 2>&1
+          cat out.txt
+          mkdir o && cp out.txt o/ && cd o && git init -q -b logs-cap && git config user.name bot && git config user.email bot@users.noreply.github.com && git add . && git commit -qm o && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs-cap
