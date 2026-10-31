@@ -232,14 +232,12 @@ ipcMain.handle('image', async (_e, { url, referer }) => {
   return { data: Buffer.from(await r.arrayBuffer()), mime: r.headers.get('content-type') || 'image/jpeg' };
 });
 
-// Manga: read the text in a slice of a page (offline text recognition)
-let ocrWorker = null;
-let ocrStarting = null;
-
-/** Files packed into the app can't be started as background workers, so use the unpacked copy. */
-function unpacked(p) {
-  return p.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
-}
+// Manga: read the text in a slice of a page, using Windows' built-in text recognition (offline).
+// One PowerShell helper stays running; each request is an image file path, each answer one JSON line.
+let ocrProc = null;
+let ocrReady = null;
+let ocrQueue = [];
+let ocrBuf = '';
 
 function withTimeout(promise, ms, what) {
   return Promise.race([
@@ -248,35 +246,61 @@ function withTimeout(promise, ms, what) {
   ]);
 }
 
-async function getOcr() {
-  if (ocrWorker) return ocrWorker;
-  if (ocrStarting) return ocrStarting;
-  const { createWorker } = require('tesseract.js');
-  const workerPath = unpacked(path.join(path.dirname(require.resolve('tesseract.js')), 'worker-script', 'node', 'index.js'));
-  ocrStarting = withTimeout(createWorker('eng', 1, {
-    workerPath,
-    langPath: res('tessdata'),
-    cachePath: path.join(app.getPath('userData'), 'tessdata-cache'),
-    gzip: true,
-    errorHandler: (e) => console.error('OCR', e),
-  }), 60000, 'Starting text recognition').then((w) => { ocrWorker = w; return w; })
-    .catch((e) => { ocrStarting = null; throw e; });
-  return ocrStarting;
+function startOcr() {
+  if (ocrReady) return ocrReady;
+  ocrReady = new Promise((resolve, reject) => {
+    const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', res('ocr.ps1')], { windowsHide: true });
+    ocrProc = p;
+    let started = false;
+    p.stdout.setEncoding('utf8');
+    p.stdout.on('data', (chunk) => {
+      ocrBuf += chunk;
+      let nl;
+      while ((nl = ocrBuf.indexOf('\n')) >= 0) {
+        const line = ocrBuf.slice(0, nl).trim();
+        ocrBuf = ocrBuf.slice(nl + 1);
+        if (!line) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch (_) { continue; }
+        if (!started) {
+          started = true;
+          if (msg.ready) resolve(); else reject(new Error(msg.error || 'Text recognition did not start'));
+          continue;
+        }
+        const job = ocrQueue.shift();
+        if (job) msg.error ? job.reject(new Error(msg.error)) : job.resolve(msg.lines || []);
+      }
+    });
+    let errText = '';
+    p.stderr.on('data', (d) => { errText += d; });
+    const fail = (why) => {
+      const err = new Error(why);
+      if (!started) { started = true; reject(err); }
+      ocrQueue.splice(0).forEach((j) => j.reject(err));
+      ocrProc = null; ocrReady = null; ocrBuf = '';
+    };
+    p.on('error', (e) => fail('Could not start Windows text recognition: ' + e.message));
+    p.on('exit', () => fail('Windows text recognition stopped. ' + errText.slice(-200)));
+  });
+  return ocrReady;
 }
+
 ipcMain.handle('ocr', async (_e, png) => {
-  const worker = await getOcr();
-  const { data } = await withTimeout(worker.recognize(Buffer.from(png), {}, { blocks: true, text: false }), 45000, 'Reading a page');
-  const out = [];
-  for (const b of data.blocks || []) {
-    for (const p of b.paragraphs || []) {
-      if ((p.confidence || 0) < 45) continue;
-      const lines = p.lines || [];
-      const lineH = lines.length ? (p.bbox.y1 - p.bbox.y0) / lines.length : (p.bbox.y1 - p.bbox.y0);
-      out.push({ l: p.bbox.x0, t: p.bbox.y0, r: p.bbox.x1, b: p.bbox.y1, text: p.text, lineH });
-    }
+  await withTimeout(startOcr(), 30000, 'Starting text recognition');
+  const file = path.join(os.tmpdir(), `chapter-reader-ocr-${Date.now()}-${Math.random().toString(36).slice(2)}.png`);
+  fs.writeFileSync(file, Buffer.from(png));
+  try {
+    const lines = await withTimeout(new Promise((resolve, reject) => {
+      ocrQueue.push({ resolve, reject });
+      ocrProc.stdin.write(file + '\n');
+    }), 45000, 'Reading a page');
+    return lines.map((x) => ({ l: x.l, t: x.t, r: x.r, b: x.b, text: x.text, lineH: Math.max(1, x.b - x.t) }));
+  } finally {
+    fs.unlink(file, () => {});
   }
-  return out;
 });
+
+app.on('will-quit', () => { try { ocrProc?.kill(); } catch (_) {} });
 
 ipcMain.handle('synth', (_e, { text, engine, voice, rate }) =>
   engine === 'edge' ? edgeTts.synth(text, voice, rate) : piperSynth(text, rate));

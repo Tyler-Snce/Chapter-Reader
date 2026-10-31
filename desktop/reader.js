@@ -359,9 +359,10 @@ async function startManga(ch) {
 async function readPage(blob, imgIndex) {
   const bmp = await createImageBitmap(blob);
   const W = bmp.width, H = bmp.height;
-  const scale = W > 1600 ? 0.5 : 1;
-  const tileH = Math.min(H, W * 2);
-  const overlap = Math.min(Math.floor(tileH / 4), Math.floor(W / 3));
+  // Windows text recognition handles pictures up to about 2600px on a side
+  const scale = Math.min(1, 1400 / W);
+  const tileH = Math.min(H, Math.floor(2400 / scale));
+  const overlap = Math.min(Math.floor(tileH / 4), Math.floor(300 / scale));
   const found = [];
   for (let top = 0; top < H;) {
     const bottom = Math.min(H, top + tileH);

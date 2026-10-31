@@ -37,9 +37,6 @@ jobs:
             curl -sSLf -o voices/en_GB-cori-high.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/en_GB-cori-high.onnx
             curl -sSLf -o voices/en_GB-cori-high.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/cori/high/en_GB-cori-high.onnx.json
             ls -la voices
-            mkdir -p tessdata
-            curl -sSLf -o tessdata/eng.traineddata.gz https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz
-            ls -la tessdata
           } 2>&1 | tee -a "$RUNNER_TEMP/build.log"
 
       - name: Test the Cori voice
@@ -48,6 +45,23 @@ jobs:
           echo "Hello from Chapter Reader." | ./piper/piper.exe --model voices/en_GB-cori-high.onnx --output_file test.wav 2>&1 | tee -a "$RUNNER_TEMP/build.log"
           ls -la test.wav | tee -a "$RUNNER_TEMP/build.log"
           rm test.wav
+
+      - name: Test Windows text recognition on a sample picture
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $bmp = New-Object System.Drawing.Bitmap 900, 260
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.Clear([System.Drawing.Color]::White)
+          $font = New-Object System.Drawing.Font 'Arial', 40
+          $g.DrawString('QUARTERFINALS AGAINST', $font, [System.Drawing.Brushes]::Black, 20, 40)
+          $g.DrawString('SUSU BOYS HIGH SCHOOL', $font, [System.Drawing.Brushes]::Black, 20, 130)
+          $img = Join-Path $env:RUNNER_TEMP 'ocr-test.png'
+          $bmp.Save($img, [System.Drawing.Imaging.ImageFormat]::Png)
+          $out = $img | powershell.exe -NoProfile -ExecutionPolicy Bypass -File ocr.ps1 2>&1 | Out-String
+          Write-Output $out
+          Add-Content -Path (Join-Path $env:RUNNER_TEMP 'build.log') -Value ("OCR TEST:`n" + $out)
 
       - name: Install
         run: |

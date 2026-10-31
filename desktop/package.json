@@ -10,8 +10,7 @@
     "dist": "electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
-    "ws": "^8.18.0",
-    "tesseract.js": "^5.1.1"
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "electron": "^33.2.1",
@@ -45,8 +44,8 @@
         "to": "browser-url.ps1"
       },
       {
-        "from": "tessdata",
-        "to": "tessdata"
+        "from": "ocr.ps1",
+        "to": "ocr.ps1"
       }
     ],
     "win": {
