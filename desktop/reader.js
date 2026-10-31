@@ -68,11 +68,12 @@ function mergeLibrary(remote) {
 
 async function syncPush() {
   const k = syncKey(); const r = settings.resume;
-  if (!syncOn() || !k || !r || !r.url) return;
+  if (!syncOn() || !k) return;
   // Take in the other device's newest saves first, so they aren't overwritten
   await syncPull();
-  const body = { url: r.url, para: r.para || 0, title: r.title || '', updated: r.updated || Date.now(), device: 'pc' };
+  const body = r && r.url ? { url: r.url, para: r.para || 0, title: r.title || '', updated: r.updated || Date.now(), device: 'pc' } : {};
   for (const [id, e] of Object.entries(library())) body['library/' + id] = e;
+  if (!Object.keys(body).length) return;
   try {
     await fetch(syncUrl(k), { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   } catch (_) {}
@@ -1000,7 +1001,7 @@ $('gear').addEventListener('click', () => $('settings').classList.toggle('show')
 $('libBtn').addEventListener('click', () => {
   const show = !$('library').classList.contains('show');
   $('library').classList.toggle('show', show);
-  if (show) { showLibraryList(); syncPull(); }
+  if (show) { showLibraryList(); syncPush().then(showLibraryList); }
 });
 $('libClose').addEventListener('click', () => $('library').classList.remove('show'));
 
@@ -1071,7 +1072,8 @@ ipcRenderer.invoke('settings-get').then((s) => {
   if (!syncOn()) $('syncRow').style.display = 'none';
   showResume();
   push();
-  syncPull().then((changed) => { if (changed) { showResume(); push(); } });
+  syncPull().then((changed) => { if (changed) { showResume(); push(); } })
+    .then(() => syncPush());   // make sure this PC's saves are online for the phone
 });
 
 $('syncSave').addEventListener('click', () => {

@@ -623,7 +623,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     /** Checks online for newer progress (e.g. from your PC). */
     fun syncNow() {
-        syncIo.execute { if (Sync.pull(prefs)) handler.post { notifyState() } }
+        syncIo.execute { Sync.push(prefs); handler.post { notifyState() } }   // push also fetches first
     }
 
     private fun paraChanged(p: Int) {

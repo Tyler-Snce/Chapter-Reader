@@ -301,7 +301,7 @@ class MainActivity : Activity(), ReaderService.Listener {
     private fun showLibrary() {
         // Fetch saves made on the PC first, then show the list
         Thread {
-            Sync.pull(prefs)
+            Sync.push(prefs)   // fetches the PC's saves, then sends this phone's
             runOnUiThread { if (!isFinishing) openLibrary() }
         }.start()
     }

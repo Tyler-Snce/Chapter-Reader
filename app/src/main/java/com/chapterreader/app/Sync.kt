@@ -34,16 +34,18 @@ object Sync {
     fun push(prefs: SharedPreferences) {
         if (!configured) return
         val key = key(prefs) ?: return
-        val link = prefs.getString("resumeUrl", null) ?: return
         // Take in the other device's newest saves first, so they aren't overwritten
         pull(prefs)
         val body = JSONObject()
+        val link = prefs.getString("resumeUrl", null)
+        if (link != null) body
             .put("url", link)
             .put("para", prefs.getInt("resumePara", 0))
             .put("title", prefs.getString("resumeTitle", "") ?: "")
             .put("updated", prefs.getLong("resumeUpdated", System.currentTimeMillis()))
             .put("device", "phone")
         for ((id, e) in Library.load(prefs)) body.put("library/$id", e.toJson())
+        if (body.length() == 0) return
         try {
             val c = URL(url(key)).openConnection() as HttpURLConnection
             c.requestMethod = "POST"
