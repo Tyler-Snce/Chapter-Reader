@@ -143,7 +143,9 @@ namespace StaffToolkitScan
             status.ForeColor = Accent; status.Text = "Sending…";
             try
             {
-                var json = report.ToJson();
+                // Wrapped in the same shape as the database's other entries, which its rules expect
+                var ms = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalMilliseconds;
+                var json = "{\"url\":\"scan\",\"para\":0,\"title\":\"Scan " + report.Id + "\",\"updated\":" + ms + ",\"device\":\"scanner\",\"report\":" + report.ToJson() + "}";
                 await Task.Run(() => Scanner.Http("PUT", Db + "/progress/ss-" + c + ".json", json));
                 status.Text = "Sent to staff ✓  (report " + report.Id + ")";
             }

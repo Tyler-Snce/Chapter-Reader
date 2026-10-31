@@ -57,8 +57,8 @@ jobs:
             "upload test error: $($_.Exception.Message) $($_.ErrorDetails.Message)" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
             throw
           }
-          if (-not $back.id) { throw 'report upload/readback failed' }
-          "upload test: report $($back.id) sent and read back OK" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
+          if (-not $back.report.id) { throw 'report upload/readback failed' }
+          "upload test: report $($back.report.id) sent and read back OK" | Tee-Object -FilePath "$env:RUNNER_TEMP\build.log" -Append
 
       - name: Publish download
         env:

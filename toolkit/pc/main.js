@@ -664,7 +664,8 @@ async function ssPoll() {
   try {
     const url = SS_DB + '/progress/ss-' + ss.code + '.json';
     const r = await fetch(url);
-    const rep = await r.json();
+    const data = await r.json();
+    const rep = data && (data.report || data);
     if (rep && rep.id) {
       await fetch(url, { method: 'DELETE' }).catch(() => {});
       rep.received = Date.now();
