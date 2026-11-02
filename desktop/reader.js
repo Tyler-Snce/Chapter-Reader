@@ -110,7 +110,7 @@ async function checkAlerts() {
     await syncPull();
     const state = settings.alertState || {};
     const page = async (u) => {
-      try { const r = await ipcRenderer.invoke('fetch', u); const c = parseChapter(r.html, r.url); return c ? { url: c.url, title: c.heading || c.title, next: c.next } : null; } catch (_) { return null; }
+      try { const r = await ipcRenderer.invoke('fetch', { url: u, quiet: true }); const c = parseChapter(r.html, r.url); return c ? { url: c.url, title: c.heading || c.title, next: c.next } : null; } catch (_) { return null; }
     };
     const entries = Object.entries(library()).filter(([, e]) => e && !e.deleted && e.url)
       .sort((a, b) => (b[1].updated || 0) - (a[1].updated || 0)).slice(0, 40);
@@ -1081,6 +1081,17 @@ $('alertsCheck').addEventListener('click', async () => {
   $('alertsInfo').textContent = first ? 'Done. From now on you\'ll be told when new chapters come out.'
     : n === 0 ? 'No new chapters yet' : n + (n === 1 ? ' series has' : ' series have') + ' a new chapter';
 });
+// Browser helper status (Settings)
+function showHelper(on) {
+  const el = document.getElementById('helperState');
+  if (!el) return;
+  el.textContent = on ? '\u2713 Connected \u2013 chapters load through your browser' : 'Not connected';
+  el.style.color = on ? 'var(--accent)' : 'var(--muted)';
+}
+ipcRenderer.on('helper', (_e, on) => showHelper(on));
+ipcRenderer.invoke('helper-status').then(showHelper);
+document.getElementById('helperFolder').addEventListener('click', () => ipcRenderer.send('helper-folder'));
+
 ipcRenderer.on('open-save', (_e, { url, para }) => { $('library').classList.remove('show'); loadChapter(url, true, para || 0); });
 
 $('engine').addEventListener('change', (e) => {

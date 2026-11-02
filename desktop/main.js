@@ -197,6 +197,17 @@ async function command(c) {
     case 'readBrowser': {
       setMenu(false);
       send(reader, 'status', 'Finding your page…');
+      // With the helper, take the page straight from your browser (no download, no site checks)
+      if (helperOn()) {
+        try {
+          const page = await helperAsk({ type: 'current' }, 35000);
+          handedOver.set(page.url, { html: page.html, url: page.url, t: Date.now() });
+          send(reader, 'cmd', { type: 'load', url: page.url, play: true });
+          break;
+        } catch (e) {
+          send(reader, 'status', 'Browser helper: ' + e.message);
+        }
+      }
       const url = await browserUrl();
       if (url) send(reader, 'cmd', { type: 'load', url, play: true });
       else {
@@ -231,6 +242,53 @@ ipcMain.on('settings-set', (_e, patch) => {
   send(reader, 'settings', settings);
   send(bubble, 'settings', settings);
 });
+// ---------- browser helper (extension in Edge/Chrome) ----------
+// The helper hands over the page you're reading straight from your own browser, and loads next
+// chapters in your tab, so site checks, logins and ads behave exactly as they do for you.
+const { WebSocketServer } = require('ws');
+const HELPER_PORT = 47321;
+let helperSock = null;
+const helperWaiting = new Map();
+let helperNext = 1;
+
+function startHelperServer() {
+  let wss;
+  try { wss = new WebSocketServer({ host: '127.0.0.1', port: HELPER_PORT }); } catch (_) { return; }
+  wss.on('error', () => {});
+  wss.on('connection', (sock, req) => {
+    // Only the browser extension may connect (not web pages)
+    const origin = String(req.headers.origin || '');
+    if (!/^(chrome|moz)-extension:\/\//.test(origin)) { sock.close(); return; }
+    helperSock = sock;
+    send(reader, 'helper', true);
+    sock.on('message', (data) => {
+      let m;
+      try { m = JSON.parse(String(data)); } catch (_) { return; }
+      const w = m.id && helperWaiting.get(m.id);
+      if (!w) return;
+      helperWaiting.delete(m.id);
+      clearTimeout(w.timer);
+      m.ok ? w.resolve(m) : w.reject(new Error(m.error || 'the browser helper had a problem'));
+    });
+    sock.on('close', () => { if (helperSock === sock) { helperSock = null; send(reader, 'helper', false); } });
+    sock.on('error', () => {});
+  });
+}
+const helperOn = () => !!(helperSock && helperSock.readyState === 1);
+function helperAsk(msg, timeout = 90000) {
+  return new Promise((resolve, reject) => {
+    if (!helperOn()) { reject(new Error('the browser helper isn\'t connected')); return; }
+    const id = helperNext++;
+    const timer = setTimeout(() => { helperWaiting.delete(id); reject(new Error('the browser helper took too long')); }, timeout);
+    helperWaiting.set(id, { resolve, reject, timer });
+    helperSock.send(JSON.stringify({ ...msg, id }));
+  });
+}
+// Pages handed over by the helper, used straight away instead of downloading them again
+const handedOver = new Map();
+ipcMain.handle('helper-status', () => helperOn());
+ipcMain.on('helper-folder', () => require('electron').shell.openPath(res('helper')));
+
 // Pages are fetched through Chromium's own networking (like a real browser), in a session that keeps
 // sites' cookies. If a site refuses (bot protection) or the story only appears after its scripts run,
 // the page is opened in a hidden browser window instead. Ads and pop-ups are blocked there.
@@ -241,7 +299,9 @@ let sitesSession = null;
 function sites() {
   if (sitesSession) return sitesSession;
   sitesSession = session.fromPartition('persist:sites');
-  sitesSession.setUserAgent(UA, 'en-GB,en');
+  // Same as Chrome of this version, without the app's own name (sites check these match)
+  const plain = app.userAgentFallback.replace(/\s(Electron|chapter-reader-pc|Chapter Reader)\/\S+/gi, '');
+  sitesSession.setUserAgent(plain, 'en-GB,en');
   sitesSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (d, cb) => {
     let h = '';
     try { h = new URL(d.url).hostname; } catch (_) {}
@@ -300,6 +360,17 @@ function browserFetch(url) {
 
 ipcMain.handle('fetch', async (_e, arg) => {
   const url = typeof arg === 'string' ? arg : arg.url;
+  const h = handedOver.get(url);
+  if (h && Date.now() - h.t < 120000) { handedOver.delete(url); return { html: h.html, url: h.url }; }
+  // The helper loads it in your own browser (the reading tab moves on; background checks use a hidden tab)
+  if (helperOn()) {
+    try {
+      const page = await helperAsk({ type: 'load', url, quiet: !!(arg && arg.quiet) });
+      return { html: page.html, url: page.url };
+    } catch (e) {
+      if (arg && arg.quiet) throw e;
+    }
+  }
   if ((arg && arg.render) || browserHosts.has(hostOf(url))) return browserFetch(url);
   let r;
   try {
@@ -464,6 +535,7 @@ function registerShortcuts() {
 if (process.platform === 'win32') app.setAppUserModelId('com.chapterreader.pc');
 
 app.whenReady().then(() => {
+  startHelperServer();
   loadSettings();
   createReader();
   createBubble();

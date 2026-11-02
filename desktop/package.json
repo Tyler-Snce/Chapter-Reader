@@ -46,6 +46,10 @@
       {
         "from": "ocr.ps1",
         "to": "ocr.ps1"
+      },
+      {
+        "from": "helper",
+        "to": "helper"
       }
     ],
     "win": {
