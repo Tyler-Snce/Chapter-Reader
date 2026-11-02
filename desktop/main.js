@@ -231,8 +231,59 @@ ipcMain.on('settings-set', (_e, patch) => {
   send(reader, 'settings', settings);
   send(bubble, 'settings', settings);
 });
+// Sites behind Cloudflare's "checking your browser" page are loaded in a hidden browser window,
+// which passes the check by itself. The pass is kept, so later chapters load straight away.
+const browserHosts = new Set();
+const hostOf = (u) => { try { return new URL(u).hostname; } catch (_) { return ''; } };
+
+function browserFetch(url) {
+  return new Promise((resolve, reject) => {
+    const w = new BrowserWindow({
+      show: false, width: 1100, height: 850, title: 'Chapter Reader \u2013 site check',
+      webPreferences: { partition: 'persist:sites', backgroundThrottling: false },
+    });
+    w.webContents.setUserAgent(UA);
+    w.setMenuBarVisibility(false);
+    const started = Date.now();
+    let shown = false, done = false;
+    const end = (err, result) => {
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      try { w.destroy(); } catch (_) {}
+      err ? reject(err) : resolve(result);
+    };
+    const timer = setInterval(async () => {
+      if (w.isDestroyed()) { end(new Error('the site check window was closed')); return; }
+      try {
+        const [title, len] = await w.webContents.executeJavaScript('[document.title, document.body ? document.body.innerText.length : 0]');
+        const challenge = /just a moment|attention required|checking your browser|verify you are human/i.test(title);
+        if (!challenge && len > 300) {
+          const html = await w.webContents.executeJavaScript('document.documentElement.outerHTML');
+          end(null, { html, url: w.webContents.getURL() });
+          return;
+        }
+        // Still on the check after a few seconds: it wants a click, so show it
+        if (challenge && !shown && Date.now() - started > 6000) {
+          shown = true;
+          w.show(); w.focus();
+          new Notification({ title: 'Chapter Reader', body: 'This site wants you to confirm you\'re human. Tick the box in the window that opened.' }).show();
+        }
+      } catch (_) {}
+      if (Date.now() - started > 90000) end(new Error('the site\'s browser check didn\'t finish'));
+    }, 1000);
+    w.on('closed', () => end(new Error('the site check window was closed')));
+    w.loadURL(url).catch(() => {});
+  });
+}
+
 ipcMain.handle('fetch', async (_e, url) => {
+  if (browserHosts.has(hostOf(url))) return browserFetch(url);
   const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en-GB,en;q=0.9' }, redirect: 'follow' });
+  if ((r.status === 403 || r.status === 503 || r.status === 429) && (r.headers.get('cf-mitigated') || /just a moment|challenge-platform|cf-chl/i.test(await r.clone().text()))) {
+    browserHosts.add(hostOf(url));
+    return browserFetch(url);
+  }
   if (!r.ok) throw new Error('the site answered ' + r.status);
   return { html: await r.text(), url: r.url };
 });

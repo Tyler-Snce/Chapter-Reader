@@ -351,20 +351,47 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             ?: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36"
         val cookies = try { CookieManager.getInstance().getCookie(url) } catch (_: Exception) { null }
 
+        // Sites behind Cloudflare's "checking your browser" page are read through a hidden browser
+        fun viaBrowser() {
+            status = "This site checks your browser first \u2013 loading it\u2026"
+            notifyState()
+            WebFetcher.fetch(this, url) { html, at ->
+                io.execute {
+                    val ch = if (html != null) try { Extractor.parse(html, at ?: url) } catch (_: Exception) { null } else null
+                    handler.post { loaded(ch, url, startPara, wasPlaying) }
+                }
+            }
+        }
+        if (WebFetcher.needsBrowser(url)) { viaBrowser(); return }
+
         io.execute {
+            var blocked = false
             val ch = try {
                 val conn = Jsoup.connect(url)
                     .userAgent(ua)
                     .timeout(25000)
                     .maxBodySize(0)
                     .followRedirects(true)
+                    .ignoreHttpErrors(true)
                 if (!cookies.isNullOrEmpty()) conn.header("Cookie", cookies)
                 val res = conn.execute()
-                Extractor.parse(res.body(), res.url().toString())
+                if (WebFetcher.isChallenge(res.statusCode(), res.body(), res.header("cf-mitigated"))) { blocked = true; null }
+                else if (res.statusCode() >= 400) null
+                else Extractor.parse(res.body(), res.url().toString())
             } catch (_: Exception) {
                 null
             }
-            handler.post {
+            if (blocked) {
+                WebFetcher.remember(url)
+                handler.post { viaBrowser() }
+                return@execute
+            }
+            handler.post { loaded(ch, url, startPara, wasPlaying) }
+        }
+    }
+
+    private fun loaded(ch: Chapter?, url: String, startPara: Int, wasPlaying: Boolean) {
+            run {
                 loading = false
                 if (ch == null) {
                     status = "Couldn't read that page"
@@ -384,12 +411,11 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                             )
                         } catch (_: Exception) {}
                     }
-                    return@post
+                    return
                 }
                 setChapter(ch, startPara)
                 if (wasPlaying) play() else notifyState()
             }
-        }
     }
 
     fun nextChapter() = loadChapter(chapter?.next, false)
