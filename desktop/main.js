@@ -1,6 +1,6 @@
 // Chapter Reader for PC: a floating bubble that reads web novel chapters aloud.
 const {
-  app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, globalShortcut, clipboard, Notification,
+  app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, globalShortcut, clipboard, Notification, session,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -231,21 +231,36 @@ ipcMain.on('settings-set', (_e, patch) => {
   send(reader, 'settings', settings);
   send(bubble, 'settings', settings);
 });
-// Sites behind Cloudflare's "checking your browser" page are loaded in a hidden browser window,
-// which passes the check by itself. The pass is kept, so later chapters load straight away.
+// Pages are fetched through Chromium's own networking (like a real browser), in a session that keeps
+// sites' cookies. If a site refuses (bot protection) or the story only appears after its scripts run,
+// the page is opened in a hidden browser window instead. Ads and pop-ups are blocked there.
 const browserHosts = new Set();
 const hostOf = (u) => { try { return new URL(u).hostname; } catch (_) { return ''; } };
+const AD_HOSTS = /(^|\.)(doubleclick\.net|googlesyndication\.com|googleadservices\.com|adservice\.google\.[a-z.]+|google-analytics\.com|googletagmanager\.com|adnxs\.com|taboola\.com|outbrain\.com|popads\.net|popcash\.net|propellerads\.com|adsterra\.com|exoclick\.com|juicyads\.com|hilltopads\.net|admaven\.com|onclickads\.net|clickadu\.com|mgid\.com|revcontent\.com|criteo\.(com|net)|pubmatic\.com|rubiconproject\.com|amazon-adsystem\.com|adsrvr\.org|moatads\.com|scorecardresearch\.com|quantserve\.com|zedo\.com|yieldmo\.com|33across\.com|sharethrough\.com|media\.net|monetag\.com|a-ads\.com|coinzilla\.com|bidvertiser\.com|adcash\.com|realsrv\.com|tsyndicate\.com|clksite\.com|dtscout\.com|histats\.com|pushwhy\.com|richpush\.co)$/i;
+let sitesSession = null;
+function sites() {
+  if (sitesSession) return sitesSession;
+  sitesSession = session.fromPartition('persist:sites');
+  sitesSession.setUserAgent(UA, 'en-GB,en');
+  sitesSession.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (d, cb) => {
+    let h = '';
+    try { h = new URL(d.url).hostname; } catch (_) {}
+    cb({ cancel: AD_HOSTS.test(h) });
+  });
+  return sitesSession;
+}
 
 function browserFetch(url) {
   return new Promise((resolve, reject) => {
     const w = new BrowserWindow({
-      show: false, width: 1100, height: 850, title: 'Chapter Reader \u2013 site check',
-      webPreferences: { partition: 'persist:sites', backgroundThrottling: false },
+      show: false, width: 1100, height: 850, title: 'Chapter Reader \u2013 loading the page',
+      webPreferences: { session: sites(), backgroundThrottling: false },
     });
-    w.webContents.setUserAgent(UA);
     w.setMenuBarVisibility(false);
+    w.webContents.setAudioMuted(true);
+    w.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));   // no pop-up ads
     const started = Date.now();
-    let shown = false, done = false;
+    let shown = false, done = false, stable = 0, lastLen = -1;
     const end = (err, result) => {
       if (done) return;
       done = true;
@@ -254,38 +269,56 @@ function browserFetch(url) {
       err ? reject(err) : resolve(result);
     };
     const timer = setInterval(async () => {
-      if (w.isDestroyed()) { end(new Error('the site check window was closed')); return; }
+      if (w.isDestroyed()) { end(new Error('the page window was closed')); return; }
       try {
         const [title, len] = await w.webContents.executeJavaScript('[document.title, document.body ? document.body.innerText.length : 0]');
-        const challenge = /just a moment|attention required|checking your browser|verify you are human/i.test(title);
+        const challenge = /just a moment|attention required|checking your browser|verify you are human|are you a robot|captcha|security check|ddos/i.test(title);
+        // Wait until the text stops growing (pages that load the chapter with scripts)
         if (!challenge && len > 300) {
-          const html = await w.webContents.executeJavaScript('document.documentElement.outerHTML');
-          end(null, { html, url: w.webContents.getURL() });
-          return;
+          stable = len === lastLen ? stable + 1 : 0;
+          lastLen = len;
+          if (stable >= 1 || Date.now() - started > 20000) {
+            const html = await w.webContents.executeJavaScript('document.documentElement.outerHTML');
+            end(null, { html, url: w.webContents.getURL() });
+            return;
+          }
         }
-        // Still on the check after a few seconds: it wants a click, so show it
-        if (challenge && !shown && Date.now() - started > 6000) {
+        // Still on a check after a few seconds: it wants a click, so show it
+        if (challenge && !shown && Date.now() - started > 5000) {
           shown = true;
+          w.setTitle('Chapter Reader \u2013 please confirm you\'re human');
           w.show(); w.focus();
-          new Notification({ title: 'Chapter Reader', body: 'This site wants you to confirm you\'re human. Tick the box in the window that opened.' }).show();
+          new Notification({ title: 'Chapter Reader', body: 'This site wants you to confirm you\'re human. Tick the box in the window that opened, then it carries on by itself.' }).show();
         }
       } catch (_) {}
-      if (Date.now() - started > 90000) end(new Error('the site\'s browser check didn\'t finish'));
+      if (Date.now() - started > 120000) end(new Error('the site didn\'t finish loading'));
     }, 1000);
-    w.on('closed', () => end(new Error('the site check window was closed')));
+    w.on('closed', () => end(new Error('the page window was closed')));
     w.loadURL(url).catch(() => {});
   });
 }
 
-ipcMain.handle('fetch', async (_e, url) => {
-  if (browserHosts.has(hostOf(url))) return browserFetch(url);
-  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en-GB,en;q=0.9' }, redirect: 'follow' });
-  if ((r.status === 403 || r.status === 503 || r.status === 429) && (r.headers.get('cf-mitigated') || /just a moment|challenge-platform|cf-chl/i.test(await r.clone().text()))) {
+ipcMain.handle('fetch', async (_e, arg) => {
+  const url = typeof arg === 'string' ? arg : arg.url;
+  if ((arg && arg.render) || browserHosts.has(hostOf(url))) return browserFetch(url);
+  let r;
+  try {
+    r = await sites().fetch(url, { headers: { 'Accept-Language': 'en-GB,en;q=0.9' }, redirect: 'follow' });
+  } catch (_) {
+    return browserFetch(url);
+  }
+  // Refused (bot protection, rate limits): use the real browser for this site from now on
+  if (r.status === 403 || r.status === 429 || r.status === 503 || r.status === 401) {
     browserHosts.add(hostOf(url));
     return browserFetch(url);
   }
   if (!r.ok) throw new Error('the site answered ' + r.status);
-  return { html: await r.text(), url: r.url };
+  const html = await r.text();
+  if (/just a moment|cf-chl|challenge-platform|captcha/i.test(html.slice(0, 20000)) && html.length < 60000) {
+    browserHosts.add(hostOf(url));
+    return browserFetch(url);
+  }
+  return { html, url: r.url };
 });
 // Manga: download a page image (sites often only allow it when it looks like it came from their page)
 ipcMain.handle('image', async (_e, { url, referer }) => {

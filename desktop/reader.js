@@ -277,7 +277,13 @@ async function loadChapter(url, autoplay, startPara = 0) {
   setStatus('Loading chapter…');
   try {
     const page = await ipcRenderer.invoke('fetch', url);
-    const ch = parseChapter(page.html, page.url);
+    let ch = parseChapter(page.html, page.url);
+    if (!ch) {
+      // Some sites only put the chapter on the page with scripts: load it in a real (hidden) browser
+      setStatus('Loading the page fully\u2026');
+      const full = await ipcRenderer.invoke('fetch', { url, render: true });
+      ch = parseChapter(full.html, full.url);
+    }
     if (!ch) throw new Error('no story text was found on that page');
     setChapter(ch);
     if (isManga()) {

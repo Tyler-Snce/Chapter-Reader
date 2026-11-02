@@ -375,14 +375,21 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                     .ignoreHttpErrors(true)
                 if (!cookies.isNullOrEmpty()) conn.header("Cookie", cookies)
                 val res = conn.execute()
-                if (WebFetcher.isChallenge(res.statusCode(), res.body(), res.header("cf-mitigated"))) { blocked = true; null }
-                else if (res.statusCode() >= 400) null
+                val code = res.statusCode()
+                // Refused (bot protection, rate limits): use the hidden browser for this site from now on
+                if (code == 401 || code == 403 || code == 429 || code == 503 || WebFetcher.isChallenge(code, res.body(), res.header("cf-mitigated"))) { blocked = true; null }
+                else if (code >= 400) null
                 else Extractor.parse(res.body(), res.url().toString())
             } catch (_: Exception) {
                 null
             }
             if (blocked) {
                 WebFetcher.remember(url)
+                handler.post { viaBrowser() }
+                return@execute
+            }
+            // No story text found: some sites only show the chapter after their scripts run
+            if (ch == null) {
                 handler.post { viaBrowser() }
                 return@execute
             }

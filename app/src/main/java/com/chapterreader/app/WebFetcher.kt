@@ -20,6 +20,7 @@ import org.json.JSONArray
  */
 object WebFetcher {
     private val hosts = HashSet<String>()
+    private val AD_HOSTS = Regex("(^|\\.)(doubleclick\\.net|googlesyndication\\.com|googleadservices\\.com|adservice\\.google\\.[a-z.]+|google-analytics\\.com|googletagmanager\\.com|adnxs\\.com|taboola\\.com|outbrain\\.com|popads\\.net|popcash\\.net|propellerads\\.com|adsterra\\.com|exoclick\\.com|juicyads\\.com|hilltopads\\.net|admaven\\.com|onclickads\\.net|clickadu\\.com|mgid\\.com|revcontent\\.com|criteo\\.(com|net)|pubmatic\\.com|rubiconproject\\.com|amazon-adsystem\\.com|adsrvr\\.org|monetag\\.com|a-ads\\.com|bidvertiser\\.com|adcash\\.com|realsrv\\.com|tsyndicate\\.com|histats\\.com)$", RegexOption.IGNORE_CASE)
 
     /** Sites that turned away a direct fetch, so they're loaded this way straight away next time. */
     fun needsBrowser(url: String) = hosts.contains(host(url))
@@ -39,7 +40,15 @@ object WebFetcher {
         web.settings.domStorageEnabled = true
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
-        web.webViewClient = WebViewClient()
+        web.settings.setSupportMultipleWindows(false)   // no pop-up ads
+        web.settings.mediaPlaybackRequiresUserGesture = true
+        web.webViewClient = object : WebViewClient() {
+            // Ads are blocked so they don't slow the page down or get in the way
+            override fun shouldInterceptRequest(view: WebView?, request: android.webkit.WebResourceRequest?): android.webkit.WebResourceResponse? {
+                val h = request?.url?.host ?: return null
+                return if (AD_HOSTS.containsMatchIn(h)) android.webkit.WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0))) else null
+            }
+        }
         // Shown as a tiny invisible window so the page runs like a real one (needs "display over other apps")
         val wm = app.getSystemService(WindowManager::class.java)
         var attached = false
@@ -50,6 +59,8 @@ object WebFetcher {
             try { wm.addView(web, lp); attached = true } catch (_: Exception) {}
         }
         var finished = false
+        var stable = 0
+        var lastLen = -1
         val started = System.currentTimeMillis()
         fun finish(html: String?, at: String?) {
             if (finished) return
@@ -67,8 +78,11 @@ object WebFetcher {
                     val a = try { JSONArray(r) } catch (_: Exception) { null }
                     val title = a?.optString(0) ?: ""
                     val len = a?.optInt(1) ?: 0
-                    val challenge = Regex("just a moment|attention required|checking your browser|verify you are human", RegexOption.IGNORE_CASE).containsMatchIn(title)
-                    if (!challenge && len > 300) {
+                    val challenge = Regex("just a moment|attention required|checking your browser|verify you are human|are you a robot|captcha|security check|ddos", RegexOption.IGNORE_CASE).containsMatchIn(title)
+                    // Wait until the text stops growing (pages that load the chapter with scripts)
+                    stable = if (len == lastLen) stable + 1 else 0
+                    lastLen = len
+                    if (!challenge && len > 300 && (stable >= 1 || System.currentTimeMillis() - started > 20_000)) {
                         val at = a?.optString(2)
                         web.evaluateJavascript("document.documentElement.outerHTML") { h ->
                             val html = try { JSONArray("[$h]").getString(0) } catch (_: Exception) { null }
