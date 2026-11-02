@@ -1,0 +1,19 @@
+name: Site test
+on:
+  push:
+    branches: [sitetest]
+permissions:
+  contents: write
+jobs:
+  t:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch
+        run: |
+          set +e
+          mkdir o
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+          curl -sSL -A "$UA" -H "Accept-Language: en-GB,en;q=0.9" -D o/headers.txt -o o/page.html "https://novellive.app/book/from-bullets-to-billions/chapter-2-the-richest-family"
+          curl -sSL -A "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36" -o o/page-mobile.html "https://novellive.app/book/from-bullets-to-billions/chapter-2-the-richest-family"
+          ls -la o
+          cd o && git init -q -b logs-site && git config user.name bot && git config user.email bot@users.noreply.github.com && git add . && git commit -qm o && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs-site
