@@ -690,7 +690,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         if (chapter == null && !loading) { resume(); return }
         if (chapter == null || loading) return
         if (items.isEmpty() && !isManga) return
-        if (checkEngineChanged() || !ttsReady) { playWhenReady = true; return }
+        if (msVoice == null && (checkEngineChanged() || !ttsReady)) { playWhenReady = true; return }
         if (idx >= items.size && (!isManga || mangaDone)) idx = 0
         playing = true
         errors = 0
@@ -767,7 +767,68 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     // highlight that matches the audio, and speed control without a pitch change.
 
     private val recorded: Boolean
-        get() = engineName?.contains("google", ignoreCase = true) != true
+        get() = msVoice != null || engineName?.contains("google", ignoreCase = true) != true
+
+    // ---------- Microsoft natural voices (online) ----------
+
+    /** The chosen Microsoft voice, or null for the phone's own voice (SherpaTTS, Google...). */
+    val msVoice: String? get() = prefs.getString("voice", "")?.takeIf { it.isNotEmpty() }
+    val voiceName: String get() = EdgeTts.name(msVoice)
+    private val msIo = Executors.newFixedThreadPool(2)
+    private val wordMarks = HashMap<Int, List<EdgeTts.Word>>()
+    private var msFailures = 0
+
+    /** Switches voice ("" = the phone's own voice) and carries on reading with it. */
+    fun setVoice(id: String) {
+        prefs.edit().putString("voice", id).apply()
+        val was = playing
+        clearRecordings()
+        wordMarks.clear()
+        msFailures = 0
+        if (was) speakCurrent()
+        Toast.makeText(this, "Voice: " + EdgeTts.name(id.ifEmpty { null }), Toast.LENGTH_SHORT).show()
+        notifyState()
+    }
+
+    /** The bubble's voice button: goes through the Microsoft voices, then the phone's own voice. */
+    fun nextVoice() {
+        val ids = EdgeTts.VOICES.map { it.first } + ""
+        val i = ids.indexOf(msVoice ?: "")
+        setVoice(ids[(i + 1) % ids.size])
+    }
+
+    private fun recordMs(i: Int) {
+        recording.add(i)
+        val g = gen
+        val text = items[i].text
+        val voice = msVoice ?: return
+        val r = rate
+        msIo.execute {
+            val res = try { EdgeTts.synth(text, voice, r) } catch (_: Exception) { null }
+            val f = File(recDir(), "$g-$i.mp3")
+            if (res != null) try { f.writeBytes(res.audio) } catch (_: Exception) {}
+            handler.post {
+                if (g != gen) { f.delete(); return@post }
+                recording.remove(i)
+                if (res == null || !f.exists()) {
+                    failed.add(i)
+                    msFailures++
+                    if (msFailures >= 3 && playing) {
+                        pause()
+                        status = "The Microsoft voice can't be reached (no internet?). Try again, or pick the phone voice."
+                        notifyState()
+                        return@post
+                    }
+                    fileReady(i)
+                    return@post
+                }
+                msFailures = 0
+                files[i] = f
+                wordMarks[i] = res.words
+                fileReady(i)
+            }
+        }
+    }
     private var gen = 0
     private val files = HashMap<Int, File>()
     private val recording = HashSet<Int>()
@@ -783,6 +844,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     private fun clearRecordings() {
         gen++
+        wordMarks.clear()
         stopPlayers()
         files.clear(); recording.clear(); failed.clear()
         try { if (ttsReady) tts.stop() } catch (_: Exception) {}
@@ -800,6 +862,7 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
 
     private fun record(i: Int) {
         if (i < 0 || i >= items.size || files.containsKey(i) || recording.contains(i) || failed.contains(i)) return
+        if (msVoice != null) { recordMs(i); return }
         recording.add(i)
         tts.setSpeechRate(rate)
         val f = File(recDir(), "$gen-$i.wav")
@@ -960,6 +1023,15 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             skipFrom(i)
             return@Runnable
         }
+        if (msVoice != null) {
+            // Microsoft voice slow to answer: ask again
+            gen++
+            recording.clear()
+            idx = i
+            waiting = -1
+            playRecorded()
+            return@Runnable
+        }
         gen++
         recording.clear()
         try { tts.shutdown() } catch (_: Exception) {}
@@ -995,7 +1067,13 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             try {
                 val item = items.getOrNull(playerIdx)
                 val dur = mp.duration
-                if (item != null && item.p >= 0 && item.offset >= 0 && dur > 0) {
+                val marks = wordMarks[playerIdx]
+                if (item != null && item.p >= 0 && item.offset >= 0 && !marks.isNullOrEmpty()) {
+                    // Microsoft voices say exactly when each word is spoken
+                    val now = mp.currentPosition
+                    val w = marks.lastOrNull { it.ms <= now } ?: marks[0]
+                    each { it.onWord(item.p, item.offset + w.start, item.offset + w.end) }
+                } else if (item != null && item.p >= 0 && item.offset >= 0 && dur > 0) {
                     val t = item.text
                     val frac = (mp.currentPosition.toFloat() / dur).coerceIn(0f, 1f)
                     val pos = (frac * t.length).toInt().coerceIn(0, t.length - 1)

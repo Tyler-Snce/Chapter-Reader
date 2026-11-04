@@ -42,6 +42,9 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
     lint {
         checkReleaseBuilds = false
         abortOnError = false
@@ -52,4 +55,8 @@ dependencies {
     implementation("org.jsoup:jsoup:1.17.2")
     // On-device text recognition for reading manga speech bubbles (works offline)
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Talking to Microsoft's online voices
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20231013")
 }

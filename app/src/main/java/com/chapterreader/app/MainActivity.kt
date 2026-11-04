@@ -143,6 +143,13 @@ class MainActivity : Activity(), ReaderService.Listener {
         row2.addView(bubbleBox, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(row2)
 
+        // Voice: Microsoft's natural voices, or the phone's own (SherpaTTS etc.)
+        voiceBtn = button("") { pickVoice() }.apply { gravity = Gravity.CENTER_VERTICAL or Gravity.START; setPadding(px(14), px(8), px(14), px(8)) }
+        root.addView(voiceBtn, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(px(9), px(4), px(9), 0)
+        })
+        showVoice()
+
         // Sync: continue on another device (phone or PC) under the same name
         val row3 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -245,6 +252,7 @@ class MainActivity : Activity(), ReaderService.Listener {
         ReaderService.listener = this
         ReaderService.appVisible = true
         svc()?.updateBubble()
+        if (::voiceBtn.isInitialized) showVoice()
         if (prefs.getBoolean("bubble", true) && bubbleReady()) startBubble()
         if (prefs.getBoolean("bubbleSetup", false) && Settings.canDrawOverlays(this)) {
             prefs.edit().putBoolean("bubbleSetup", false).apply()
@@ -390,6 +398,35 @@ class MainActivity : Activity(), ReaderService.Listener {
                 .putExtra(ReaderService.EXTRA_URL, e.url)
                 .putExtra(ReaderService.EXTRA_PARA, e.para)
         )
+    }
+
+    private lateinit var voiceBtn: TextView
+
+    private fun showVoice() {
+        val id = prefs.getString("voice", "") ?: ""
+        val name = EdgeTts.name(id.ifEmpty { null })
+        voiceBtn.text = "\uD83D\uDDE3  Voice: $name" + (EdgeTts.DESCRIPTIONS[id]?.let { " \u2013 $it" } ?: if (id.isEmpty()) " (SherpaTTS / Google)" else "") + "   \u25BE"
+    }
+
+    /** Choose the voice: Microsoft's natural voices (need internet) or the phone's own. */
+    private fun pickVoice() {
+        val ids = EdgeTts.VOICES.map { it.first } + ""
+        val labels = ids.map { id ->
+            if (id.isEmpty()) "Phone voice (SherpaTTS / Google \u2013 works offline)"
+            else EdgeTts.name(id) + " \u2013 " + (EdgeTts.DESCRIPTIONS[id] ?: "")
+        }.toTypedArray()
+        val current = ids.indexOf(prefs.getString("voice", "") ?: "").coerceAtLeast(0)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Voice (Microsoft voices need internet)")
+            .setSingleChoiceItems(labels, current) { d, which ->
+                val id = ids[which]
+                val s = svc()
+                if (s != null) s.setVoice(id) else prefs.edit().putString("voice", id).apply()
+                showVoice()
+                d.dismiss()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
 
     private fun readThisPage() {

@@ -31,6 +31,7 @@ class Bubble(private val svc: ReaderService) {
     private val ball = android.widget.ImageView(svc)
     private val panel = LinearLayout(svc)
     private val rateLabel = TextView(svc)
+    private val voiceLabel = TextView(svc)
     private var shown = false
 
     private val params = WindowManager.LayoutParams(
@@ -87,6 +88,15 @@ class Bubble(private val svc: ReaderService) {
         row2.addView(button("✕") { panel.visibility = View.GONE; svc.hideBubbleForNow() })
         panel.addView(row1)
         panel.addView(row2)
+        // Voice button: each tap switches to the next voice
+        voiceLabel.apply {
+            textSize = 14f
+            setTextColor(0xFFFFFFFF.toInt())
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply { cornerRadius = 10 * dp; setColor(0xFF34303D.toInt()) }
+            setOnClickListener { svc.nextVoice(); update() }
+        }
+        panel.addView(voiceLabel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, px(42)).apply { setMargins(px(3), px(6), px(3), 0) })
         // Big red button: stop reading and close Chapter Reader completely
         val quit = TextView(svc).apply {
             text = "✕  Quit Chapter Reader"
@@ -278,5 +288,6 @@ class Bubble(private val svc: ReaderService) {
             }
         )
         rateLabel.text = String.format(Locale.UK, "%.1f×", svc.rate)
+        voiceLabel.text = "\uD83D\uDDE3  Voice: " + svc.voiceName + "   \u25B8"
     }
 }
