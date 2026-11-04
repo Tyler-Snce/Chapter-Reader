@@ -1,0 +1,7 @@
+en-US-AvaMultilingualNeural OK 16704 bytes 10 words
+en-US-AndrewMultilingualNeural FAIL Microsoft voice connection closed
+en-US-EmmaMultilingualNeural OK 17424 bytes 10 words
+en-US-BrianMultilingualNeural OK 16128 bytes 10 words
+en-AU-WilliamMultilingualNeural OK 16416 bytes 10 words
+en-GB-SoniaNeural OK 18000 bytes 10 words
+en-GB-RyanNeural FAIL Microsoft voice connection closed
