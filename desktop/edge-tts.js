@@ -124,7 +124,17 @@ function synth(text, voice, rate) {
 
     ws.on('unexpected-response', (_req, res) => fail(new Error('Microsoft voice refused the connection (' + res.statusCode + ')')));
     ws.on('error', (e) => fail(e));
-    ws.on('close', () => { if (!done) fail(new Error('Microsoft voice connection closed')); });
+    ws.on('close', () => {
+      if (done) return;
+      // Microsoft sometimes drops a connection when sentences come quickly: try once more
+      if (!retried) {
+        done = true;
+        clearTimeout(timer);
+        setTimeout(() => synth(text, voice, rate, true).then(resolve, reject), 400);
+        return;
+      }
+      fail(new Error('Microsoft voice connection closed'));
+    });
   });
 }
 

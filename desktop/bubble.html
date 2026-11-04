@@ -70,6 +70,9 @@
     <button class="wide" data-cmd="openReader" style="flex:2">&#128196; Reading view</button>
   </div>
   <div class="row">
+    <button class="wide" data-cmd="voiceNext" id="voiceBtn" title="Change voice">&#128483; Voice</button>
+  </div>
+  <div class="row">
     <button class="wide" data-cmd="hideBubble">Hide bubble</button>
     <button class="quit" data-cmd="quit">&#10005; Quit</button>
   </div>
@@ -94,6 +97,7 @@ function render() {
   ball.innerHTML = st.loading ? ICONS.dots : (!st.hasChapter && !st.hasResume) ? ICONS.book : st.playing ? ICONS.pause : ICONS.play;
   document.getElementById('rate').textContent = (st.rate || 1).toFixed(1) + '×';
   document.getElementById('chapter').textContent = st.title || 'Chapter Reader';
+  document.getElementById('voiceBtn').textContent = '\u{1F5E3} Voice: ' + (st.voice || '\u2026') + '  \u25B8';
   document.getElementById('sub').textContent = st.status || (st.hasChapter ? (st.progress || '') : st.hasResume ? 'Click to continue: ' + (st.resumeTitle || 'your last chapter') : 'Open a chapter in your browser, then Read this page');
 }
 

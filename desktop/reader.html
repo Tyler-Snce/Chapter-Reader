@@ -126,24 +126,27 @@
     <button id="gear" title="Settings" style="flex:0 0 46px">&#9881;</button>
   </div>
   <div id="settings">
-    <label for="engine">Voice
-      <select id="engine">
-        <option value="piper">Cori (same as your phone, works offline)</option>
-        <option value="edge">Microsoft Natural (needs internet)</option>
-      </select>
-    </label>
-    <label for="edgeVoice">Microsoft voice
-      <select id="edgeVoice">
-        <option value="en-GB-SoniaNeural">Sonia (British)</option>
-        <option value="en-GB-RyanNeural">Ryan (British)</option>
-        <option value="en-GB-LibbyNeural">Libby (British)</option>
-        <option value="en-GB-MaisieNeural">Maisie (British)</option>
-        <option value="en-GB-ThomasNeural">Thomas (British)</option>
-        <option value="en-US-AndrewNeural">Andrew (American)</option>
-        <option value="en-US-EmmaNeural">Emma (American)</option>
-        <option value="en-US-BrianNeural">Brian (American)</option>
-        <option value="en-US-AriaNeural">Aria (American)</option>
-        <option value="en-US-GuyNeural">Guy (American)</option>
+    <label for="voice">Voice
+      <select id="voice">
+        <optgroup label="Most natural (Microsoft, needs internet)">
+          <option value="en-US-AvaMultilingualNeural">Ava – expressive, caring (American)</option>
+          <option value="en-US-EmmaMultilingualNeural">Emma – cheerful, clear (American)</option>
+          <option value="en-US-AndrewMultilingualNeural">Andrew – warm, confident (American)</option>
+          <option value="en-US-BrianMultilingualNeural">Brian – casual, relaxed (American)</option>
+          <option value="en-AU-WilliamMultilingualNeural">William – friendly (Australian)</option>
+        </optgroup>
+        <optgroup label="Microsoft (needs internet)">
+          <option value="en-GB-SoniaNeural">Sonia (British)</option>
+          <option value="en-GB-RyanNeural">Ryan (British)</option>
+          <option value="en-GB-LibbyNeural">Libby (British)</option>
+          <option value="en-GB-MaisieNeural">Maisie (British)</option>
+          <option value="en-GB-ThomasNeural">Thomas (British)</option>
+          <option value="en-US-AriaNeural">Aria (American)</option>
+          <option value="en-US-GuyNeural">Guy (American)</option>
+        </optgroup>
+        <optgroup label="Works offline">
+          <option value="piper">Cori (same as your phone)</option>
+        </optgroup>
       </select>
     </label>
     <label for="auto"><input type="checkbox" id="auto"> Go to the next chapter automatically</label>

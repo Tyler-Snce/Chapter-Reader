@@ -28,8 +28,8 @@ let dragStart = null;
 
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 let settings = {
-  engine: 'piper',                 // 'piper' (Cori, offline) or 'edge' (Microsoft Natural, online)
-  edgeVoice: 'en-GB-SoniaNeural',
+  engine: 'edge',                  // 'piper' (Cori, offline) or 'edge' (Microsoft Natural, online)
+  edgeVoice: 'en-US-AvaMultilingualNeural',
   rate: 1,
   auto: true,
   textSize: 19,

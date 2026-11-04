@@ -22,6 +22,7 @@
     "files": [
       "main.js",
       "edge-tts.js",
+      "gec.js",
       "bubble.html",
       "reader.html",
       "reader.js",

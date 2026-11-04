@@ -222,7 +222,7 @@ function confirmDelete(btn) {
 
 let pushTimer = null;
 
-let settings = { engine: 'piper', edgeVoice: 'en-GB-SoniaNeural', rate: 1, auto: true, textSize: 19 };
+let settings = { engine: 'edge', edgeVoice: 'en-US-AvaMultilingualNeural', rate: 1, auto: true, textSize: 19 };
 const st = { chapter: null, items: [], idx: 0, playing: false, loading: false, status: '' };
 
 let token = 0;              // bumps whenever playback restarts, so stale audio is ignored
@@ -1028,7 +1028,7 @@ function push() {
     hasChapter: !!st.chapter, playing: st.playing, loading: st.loading,
     hasResume: !st.chapter && !!(settings.resume && settings.resume.url),
     resumeTitle: settings.resume ? settings.resume.title : '',
-    rate: settings.rate, title: st.chapter ? title : '', status: st.status, progress: progressText(),
+    rate: settings.rate, title: st.chapter ? title : '', status: st.status, progress: progressText(), voice: voiceName(),
   });
 }
 
@@ -1042,6 +1042,7 @@ function command(c) {
     case 'back': jumpPara(-1); break;
     case 'fwd': jumpPara(1); break;
     case 'faster': setRate(settings.rate + 0.1); break;
+    case 'voiceNext': nextVoice(); break;
     case 'slower': setRate(settings.rate - 0.1); break;
     case 'load': loadChapter(c.url, c.play); break;
   }
@@ -1094,18 +1095,35 @@ document.getElementById('helperFolder').addEventListener('click', () => ipcRende
 
 ipcRenderer.on('open-save', (_e, { url, para }) => { $('library').classList.remove('show'); loadChapter(url, true, para || 0); });
 
-$('engine').addEventListener('change', (e) => {
-  settings.engine = e.target.value;
-  ipcRenderer.send('settings-set', { engine: settings.engine });
+// Voices: one list for the settings and the bubble ("piper" = Cori, offline; the rest are Microsoft)
+const VOICE_NAMES = {
+  'en-US-AvaMultilingualNeural': 'Ava', 'en-US-EmmaMultilingualNeural': 'Emma', 'en-US-AndrewMultilingualNeural': 'Andrew',
+  'en-US-BrianMultilingualNeural': 'Brian', 'en-AU-WilliamMultilingualNeural': 'William', 'en-GB-SoniaNeural': 'Sonia',
+  'en-GB-RyanNeural': 'Ryan', 'en-GB-LibbyNeural': 'Libby', 'en-GB-MaisieNeural': 'Maisie', 'en-GB-ThomasNeural': 'Thomas',
+  'en-US-AriaNeural': 'Aria', 'en-US-GuyNeural': 'Guy', piper: 'Cori',
+};
+// The bubble's voice button goes through these
+const BUBBLE_VOICES = ['en-US-AvaMultilingualNeural', 'en-US-EmmaMultilingualNeural', 'en-US-AndrewMultilingualNeural',
+  'en-US-BrianMultilingualNeural', 'en-AU-WilliamMultilingualNeural', 'en-GB-SoniaNeural', 'en-GB-RyanNeural', 'piper'];
+const currentVoice = () => (settings.engine === 'piper' ? 'piper' : settings.edgeVoice);
+const voiceName = () => VOICE_NAMES[currentVoice()] || 'Voice';
+
+function setVoice(v) {
+  if (v === 'piper') settings.engine = 'piper';
+  else { settings.engine = 'edge'; settings.edgeVoice = v; }
+  ipcRenderer.send('settings-set', { engine: settings.engine, edgeVoice: settings.edgeVoice });
+  $('voice').value = v;
   resetClips();
+  setStatus('Voice: ' + voiceName());
+  setTimeout(() => { if (st.status === 'Voice: ' + voiceName()) setStatus(''); }, 2500);
   if (st.playing) speak();
-});
-$('edgeVoice').addEventListener('change', (e) => {
-  settings.edgeVoice = e.target.value;
-  ipcRenderer.send('settings-set', { edgeVoice: settings.edgeVoice });
-  resetClips();
-  if (st.playing && settings.engine === 'edge') speak();
-});
+  push();
+}
+$('voice').addEventListener('change', (e) => setVoice(e.target.value));
+function nextVoice() {
+  const i = BUBBLE_VOICES.indexOf(currentVoice());
+  setVoice(BUBBLE_VOICES[(i + 1) % BUBBLE_VOICES.length]);
+}
 function showPace() {
   const v = Number($('artPace').value);
   $('artPaceLabel').textContent = v === 0 ? 'Off (jump to each bubble)' : v.toFixed(1) + ' s per screen';
@@ -1149,8 +1167,7 @@ $('forgetMarks').addEventListener('click', () => {
 
 ipcRenderer.invoke('settings-get').then((s) => {
   Object.assign(settings, s);
-  $('engine').value = settings.engine;
-  $('edgeVoice').value = settings.edgeVoice;
+  $('voice').value = currentVoice();
   $('auto').checked = settings.auto !== false;
   document.documentElement.style.setProperty('--text-size', (settings.textSize || 19) + 'px');
   $('artPace').value = String(settings.artPace ?? 1);
