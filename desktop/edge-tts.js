@@ -1,20 +1,17 @@
 // Microsoft "Natural" online voices (the same ones Edge's Read Aloud uses).
+// Connection details follow the edge-tts project (github.com/rany2/edge-tts).
 // Returns MP3 audio plus the timing of each word, for word highlighting.
 const WebSocket = require('ws');
 const crypto = require('crypto');
 
-const TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-const CHROMIUM = '130.0.2849.68';
-const GEC_VERSION = '1-' + CHROMIUM;
+const { secMsGec: makeGec, TOKEN } = require('./gec.js');
+// Must look like a current Edge; Microsoft refuses old versions (kept in step with the edge-tts project)
+const CHROMIUM = '143.0.3650.75';
+const GEC_VERSION = '2-' + CHROMIUM;
 const BASE = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1';
-
-function secMsGec() {
-  // Windows file-time ticks, rounded down to 5 minutes, hashed with the token
-  let secs = BigInt(Math.floor(Date.now() / 1000)) + 11644473600n;
-  secs -= secs % 300n;
-  const ticks = secs * 10000000n;
-  return crypto.createHash('sha256').update(ticks.toString() + TOKEN, 'ascii').digest('hex').toUpperCase();
-}
+// If this PC's clock is off, Microsoft refuses the token; it's corrected from the server's time
+let clockSkew = 0;
+const secMsGec = () => makeGec(Date.now() / 1000 + clockSkew);
 
 function stamp() {
   const d = new Date();
@@ -38,7 +35,7 @@ function uuid() { return crypto.randomUUID().replace(/-/g, ''); }
  * @param {number} rate  1 = normal, 1.5 = 50% faster
  * @returns {Promise<{audio: Buffer, mime: string, words: {ms:number,start:number,end:number}[]}>}
  */
-function synth(text, voice, rate) {
+function synth(text, voice, rate, retried) {
   return new Promise((resolve, reject) => {
     const url = `${BASE}?TrustedClientToken=${TOKEN}&Sec-MS-GEC=${secMsGec()}` +
       `&Sec-MS-GEC-Version=${GEC_VERSION}&ConnectionId=${uuid()}`;
@@ -48,7 +45,7 @@ function synth(text, voice, rate) {
         'Pragma': 'no-cache',
         'Cache-Control': 'no-cache',
         'Origin': 'chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold',
-        'Accept-Encoding': 'gzip, deflate, br',
+        'Accept-Encoding': 'gzip, deflate, br, zstd',
         'Accept-Language': 'en-US,en;q=0.9',
         'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36 Edg/${major}.0.0.0`,
         'Cookie': 'muid=' + crypto.randomBytes(16).toString('hex').toUpperCase() + ';',
@@ -122,7 +119,20 @@ function synth(text, voice, rate) {
       }
     });
 
-    ws.on('unexpected-response', (_req, res) => fail(new Error('Microsoft voice refused the connection (' + res.statusCode + ')')));
+    ws.on('unexpected-response', (_req, res) => {
+      // Refused because this PC's clock is off? Use the server's time and try once more
+      const server = Date.parse(res.headers.date || '');
+      if (res.statusCode === 403 && !retried && server) {
+        clockSkew += (server - Date.now()) / 1000;
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try { ws.terminate(); } catch (_) {}
+        synth(text, voice, rate, true).then(resolve, reject);
+        return;
+      }
+      fail(new Error('Microsoft voice refused the connection (' + res.statusCode + ')'));
+    });
     ws.on('error', (e) => fail(e));
     ws.on('close', () => { if (!done) fail(new Error('Microsoft voice connection closed')); });
   });

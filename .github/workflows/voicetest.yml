@@ -1,0 +1,27 @@
+name: Voice test
+on:
+  push:
+    branches: [voicetest]
+permissions:
+  contents: write
+jobs:
+  t:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+      - name: Test
+        working-directory: desktop
+        run: |
+          set +e
+          npm install --no-audit --no-fund ws >/dev/null 2>&1
+          mkdir -p /tmp/o
+          node -e "
+          const {synth}=require('./edge-tts.js');
+          (async()=>{ for (const v of ['en-US-AvaMultilingualNeural','en-US-AndrewMultilingualNeural','en-US-EmmaMultilingualNeural','en-US-BrianMultilingualNeural','en-AU-WilliamMultilingualNeural','en-GB-SoniaNeural','en-GB-RyanNeural']) {
+            try { const r=await synth('Hello, this is a test of the chapter reader voice.', v, 1.2); console.log(v, 'OK', r.audio.length, 'bytes', r.words.length, 'words'); require('fs').writeFileSync('/tmp/o/'+v+'.mp3', r.audio); } catch(e) { console.log(v, 'FAIL', e.message); } } })();
+          " > /tmp/o/synth.txt 2>&1
+          cat /tmp/o/synth.txt
+          cd /tmp/o && git init -q -b logs-voice && git config user.name bot && git config user.email bot@users.noreply.github.com && git add . && git commit -qm o && git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" logs-voice
