@@ -389,9 +389,26 @@ async function speak() {
     return;
   }
   if (my !== token || !st.playing) return;
-  // Prepare the next sentences while this one plays, so there's no gap
+  // Prepare the next sentences while this one plays, so there's no gap,
+  // and the start of the next two paragraphs, so skipping forward plays straight away
   for (let k = 1; k <= 2; k++) if (st.items[i + k]) clip(i + k).catch(() => {});
+  for (let target = item.p + 1; target <= item.p + 2; target++) {
+    const j = st.items.findIndex((it, n) => n > i && it.p >= target);
+    if (j >= 0) clip(j).catch(() => {});
+  }
   audio = new Audio(c.url);
+  // Started from a clicked word: jump into the recording at that word
+  const seek = st.seek && st.seek.i === i ? st.seek.within : 0;
+  st.seek = null;
+  if (seek > 0) {
+    audio.addEventListener('loadedmetadata', () => {
+      let at = 0;
+      const w = (c.words || []).find((x) => x.start >= seek);
+      if (w) at = Math.max(0, w.ms - 60) / 1000;
+      else if (isFinite(audio.duration)) at = (seek / item.text.length) * audio.duration;
+      try { audio.currentTime = at; } catch (_) {}
+    }, { once: true });
+  }
   audio.onended = () => { if (my !== token) return; st.idx = i + 1; speak(); };
   audio.onerror = () => { if (my !== token) return; st.idx = i + 1; speak(); };
   audio.play().catch(() => {});
@@ -438,14 +455,41 @@ function jumpPara(delta) {
   const i = st.items.findIndex((it) => it.p >= target);
   if (i < 0) return;
   st.idx = i;
+  st.seek = null;
   if (st.playing) speak(); else { highlight(st.items[i].p); push(); }
 }
 
-function startAt(p) {
-  const i = st.items.findIndex((it) => it.p >= p);
-  if (i < 0) return;
+/** Reads from paragraph [p], from character [at] within it (a clicked word). */
+function startAt(p, at = 0) {
+  st.seek = null;
+  const inPara = st.items.map((it, n) => [it, n]).filter(([it]) => it.p === p);
+  let i;
+  if (!inPara.length) {
+    i = st.items.findIndex((it) => it.p >= p);
+    if (i < 0) return;
+  } else {
+    const hit = inPara.filter(([it]) => it.offset >= 0 && it.offset <= at).pop() || inPara[0];
+    i = hit[1];
+    const t = hit[0].text;
+    let within = Math.max(0, Math.min(t.length, at - hit[0].offset));
+    within = within >= t.length ? 0 : Math.min(within, t.lastIndexOf(' ', within) + 1);
+    if (within > 0) st.seek = { i, within };
+  }
   st.idx = i;
   if (st.playing) speak(); else play();
+}
+
+/** Which character of [el] (a paragraph) is under the mouse. */
+function charAt(el, e) {
+  let node, off;
+  if (document.caretPositionFromPoint) { const c = document.caretPositionFromPoint(e.clientX, e.clientY); if (!c) return 0; node = c.offsetNode; off = c.offset; }
+  else if (document.caretRangeFromPoint) { const r = document.caretRangeFromPoint(e.clientX, e.clientY); if (!r) return 0; node = r.startContainer; off = r.startOffset; }
+  else return 0;
+  if (!el.contains(node)) return 0;
+  const r = document.createRange();
+  r.setStart(el, 0);
+  try { r.setEnd(node, off); } catch (_) { return 0; }
+  return r.toString().length;
 }
 
 function setRate(r) {
@@ -469,7 +513,47 @@ let pageUrls = [];
 let pageEls = [];
 const isManga = () => !!(st.chapter && st.chapter.images && st.chapter.images.length);
 
+// ---------- window size and manga zoom ----------
+// Text and pages grow with the window: half a screen reads comfortably, full screen fills it.
+function applyScale() {
+  const w = text.clientWidth || window.innerWidth;
+  const scale = Math.min(1.8, Math.max(1, 0.7 + w / 1600));
+  document.documentElement.style.setProperty('--scale', scale.toFixed(3));
+}
+window.addEventListener('resize', applyScale);
+applyScale();
+
+// Manga zoom: zoom out to see more of the strip at once, in to see detail
+function setMangaZoom(z, keepPlace = true) {
+  z = Math.round(Math.min(3, Math.max(0.25, z)) * 100) / 100;
+  const frac = text.scrollHeight ? text.scrollTop / text.scrollHeight : 0;
+  settings.mangaZoom = z;
+  document.documentElement.style.setProperty('--mz', z);
+  $('mzLabel').textContent = Math.round(z * 100) + '%';
+  if (keepPlace) text.scrollTop = frac * text.scrollHeight;
+  clearTimeout(setMangaZoom.t);
+  setMangaZoom.t = setTimeout(() => ipcRenderer.send('settings-set', { mangaZoom: z }), 500);
+}
+$('mzOut').addEventListener('click', () => setMangaZoom((settings.mangaZoom || 1) / 1.2));
+$('mzIn').addEventListener('click', () => setMangaZoom((settings.mangaZoom || 1) * 1.2));
+// Fit: the page in view fits the window's height
+$('mzFit').addEventListener('click', () => {
+  const pg = pageEls.find((d) => d.getBoundingClientRect().bottom > text.getBoundingClientRect().top + 40) || pageEls[0];
+  const img = pg && pg.querySelector('img');
+  if (!img || !img.naturalWidth) { setMangaZoom(1); return; }
+  const want = text.clientHeight * 0.95 * (img.naturalWidth / img.naturalHeight);
+  const now = pg.getBoundingClientRect().width / (settings.mangaZoom || 1);
+  setMangaZoom(want / now);
+});
+// Ctrl + mouse wheel zooms the pages
+text.addEventListener('wheel', (e) => {
+  if (!e.ctrlKey || !isManga()) return;
+  e.preventDefault();
+  setMangaZoom((settings.mangaZoom || 1) * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+}, { passive: false });
+
 function renderManga(ch) {
+  document.body.classList.add('manga');
   text.innerHTML = '';
   paraEls = [];
   current = -1;
@@ -930,6 +1014,7 @@ let paraEls = [];
 let current = -1;
 
 function renderText() {
+  document.body.classList.remove('manga');
   text.innerHTML = '';
   paraEls = [];
   current = -1;
@@ -942,7 +1027,8 @@ function renderText() {
   ch.paras.forEach((t, i) => {
     const p = document.createElement('p');
     p.textContent = t;
-    p.addEventListener('click', () => startAt(i));
+    // Click a word to read from there
+    p.addEventListener('click', (e) => { if (!window.getSelection().toString()) startAt(i, charAt(p, e)); });
     text.appendChild(p);
     paraEls.push(p);
   });
@@ -1170,6 +1256,8 @@ ipcRenderer.invoke('settings-get').then((s) => {
   $('voice').value = currentVoice();
   $('auto').checked = settings.auto !== false;
   document.documentElement.style.setProperty('--text-size', (settings.textSize || 19) + 'px');
+  setMangaZoom(settings.mangaZoom || 1, false);
+  applyScale();
   $('artPace').value = String(settings.artPace ?? 1);
   showPace();
   showMarks();

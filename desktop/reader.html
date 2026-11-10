@@ -29,12 +29,14 @@
   #status { color: #f0c36b; font-size: 12px; margin-top: 6px; display: none; }
   #status.show { display: block; }
   main { flex: 1; overflow-y: auto; padding: 22px 18px 40vh; scroll-behavior: smooth; }
-  main h2 { color: var(--text-on); font-size: calc(var(--text-size) + 4px); margin: 0 10px 16px; text-wrap: balance; }
-  main p { font-size: var(--text-size); line-height: 1.6; margin: 0 0 4px; padding: 8px 10px; border-radius: 10px; cursor: pointer; max-width: 70ch; }
+  /* Text grows with the window (--scale), so a full-screen or half-screen window is filled nicely */
+  main h2 { color: var(--text-on); font-size: calc((var(--text-size) + 4px) * var(--scale, 1)); margin: 0 auto 16px; padding: 0 10px; max-width: 72ch; text-wrap: balance; }
+  main p { font-size: calc(var(--text-size) * var(--scale, 1)); line-height: 1.6; margin: 0 auto 4px; padding: 8px 10px; border-radius: 10px; cursor: pointer; max-width: 72ch; }
   main p:hover { background: #1b1822; }
   main p.cur { background: var(--highlight); color: var(--text-on); }
   main p .w { background: var(--word); color: #fff; border-radius: 4px; padding: 0 1px; }
-  .pg { position: relative; max-width: 820px; margin: 0 auto; }
+  .pg { position: relative; width: calc(min(100%, 820px * var(--scale, 1)) * var(--mz, 1)); margin: 0 auto; }
+  body.manga main { overflow-x: auto; }
   .pg img { display: block; width: 100%; height: auto; }
   .pg .wait { height: 60vh; display: grid; place-items: center; color: var(--muted); }
   .bub { position: absolute; border-radius: 12px; cursor: pointer; }
@@ -63,6 +65,10 @@
   #settings select { flex: 1; min-height: 36px; padding: 0 8px; }
   #settings input[type=text] { flex: 1; min-height: 36px; padding: 0 10px; }
   .note { color: var(--muted); font-size: 12px; }
+  #mzoom { display: none; float: right; gap: 4px; align-items: center; margin-left: 10px; }
+  body.manga #mzoom { display: flex; }
+  #mzoom button { flex: 0 0 34px; min-height: 30px; padding: 0; }
+  #mzLabel { min-width: 46px; text-align: center; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
   .helperBox { display: flex; flex-direction: column; gap: 4px; padding: 6px 0; border-top: 1px solid #2c2834; border-bottom: 1px solid #2c2834; }
   #library { display: none; flex-shrink: 0; background: var(--panel); border-top: 1px solid #2c2834; max-height: 45vh; overflow-y: auto; padding: 8px; }
   #library.show { display: block; }
@@ -83,6 +89,12 @@
 </head>
 <body>
 <header>
+  <div id="mzoom" aria-label="Manga zoom">
+    <button id="mzOut" title="Zoom out (Ctrl + scroll down)">&minus;</button>
+    <span id="mzLabel">100%</span>
+    <button id="mzIn" title="Zoom in (Ctrl + scroll up)">+</button>
+    <button id="mzFit" title="Fit the window's height to a whole page" style="flex:0 0 auto;padding:4px 10px">Fit</button>
+  </div>
   <div id="title">Chapter Reader</div>
   <div id="progress"></div>
   <div id="bar"><i></i></div>
