@@ -124,7 +124,7 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String?) {
                     mangaReady = true
-                    view.evaluateJavascript("pace=${pace()}", null)
+                    view.evaluateJavascript("pace=${pace()};setZoom(${prefs.getFloat("mangaZoom", 1f)})", null)
                     pushManga()
                 }
             }
@@ -271,7 +271,13 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
                     setTextColor(TEXT)
                     setLineSpacing(0f, 1.35f)
                     setPadding(px(10), px(8), px(10), px(8))
-                    setOnClickListener { svc()?.startAtPara(i) }
+                    // Tap a word to read from there
+                    var downX = 0f; var downY = 0f
+                    setOnTouchListener { _, e -> if (e.action == android.view.MotionEvent.ACTION_DOWN) { downX = e.x; downY = e.y }; false }
+                    setOnClickListener {
+                        val at = try { getOffsetForPosition(downX, downY) } catch (_: Exception) { 0 }
+                        svc()?.startAt(i, at.coerceAtLeast(0))
+                    }
                 }
                 list.addView(tv, LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -334,6 +340,10 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
     inner class MangaBridge {
         @JavascriptInterface
         fun tap(i: Int) { runOnUiThread { svc()?.startAtPara(i) } }
+
+        /** Remembers how far the pages are zoomed in or out. */
+        @JavascriptInterface
+        fun zoom(z: Float) { prefs.edit().putFloat("mangaZoom", z).apply() }
 
         /** How long gliding to bubble [i] will take, worked out by the page. */
         @JavascriptInterface
@@ -495,7 +505,8 @@ class ReadingViewActivity : Activity(), ReaderService.Listener {
 <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 body{margin:0;background:#121016;color:#8e879c;font:15px sans-serif}
-.pg{position:relative;width:100%}
+:root{--z:1}
+.pg{position:relative;width:calc(100% * var(--z));margin:0 auto}
 .pg img{display:block;width:100%;height:auto}
 .wait{height:70vh;display:flex;align-items:center;justify-content:center}
 .b{position:absolute;border-radius:12px}
@@ -513,6 +524,18 @@ function setData(p,b,c){
   nb=b.length;
   if(c!==cur)setCur(c,0);
 }
+// Pinch with two fingers to zoom the pages in or out (from a third of the width up to double)
+var z=1,pinch=null;
+function setZoom(v){
+  v=Math.max(0.3,Math.min(2,v));
+  var h=document.documentElement.scrollHeight||1,f=window.scrollY/h;
+  z=v;document.documentElement.style.setProperty('--z',v);
+  window.scrollTo(window.scrollX,f*(document.documentElement.scrollHeight||1));
+}
+function dist(t){var a=t[0],b=t[1];return Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);}
+document.addEventListener('touchstart',function(e){if(e.touches.length==2)pinch={d:dist(e.touches),z:z};},{passive:true});
+document.addEventListener('touchmove',function(e){if(pinch&&e.touches.length==2){e.preventDefault();setZoom(pinch.z*dist(e.touches)/pinch.d);}},{passive:false});
+document.addEventListener('touchend',function(e){if(pinch&&e.touches.length<2){pinch=null;CRBridge.zoom(z);}},{passive:true});
 var pace=1,anim=0;
 function bub(i){return document.querySelector('.b[data-i="'+i+'"]');}
 function targetY(o){return window.scrollY+o.getBoundingClientRect().top-window.innerHeight/3;}

@@ -228,7 +228,8 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
                     val i = pieceIndex(utteranceId) ?: return@post
                     val item = items.getOrNull(i) ?: return@post
                     if (item.p < 0 || item.offset < 0) return@post
-                    each { it.onWord(item.p, item.offset + start, item.offset + end) }
+                    val shift = if (startShift?.first == i) startShift!!.second else 0
+                    each { it.onWord(item.p, item.offset + shift + start, item.offset + shift + end) }
                 }
             }
 
@@ -744,8 +745,16 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         var first = flush
         while (queuedUpTo < items.size - 1 && queuedUpTo < idx + queueAhead) {
             queuedUpTo++
+            // Starting from a tapped word: speak the sentence from that word on
+            val ps = pendingSeek
+            var text = items[queuedUpTo].text
+            if (ps != null && ps.first == queuedUpTo && ps.second in 1 until text.length) {
+                text = text.substring(ps.second)
+                startShift = ps
+                pendingSeek = null
+            } else if (startShift?.first == queuedUpTo) startShift = null
             tts.speak(
-                items[queuedUpTo].text,
+                text,
                 if (first) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,
                 Bundle(), pieceId(queuedUpTo)
             )
@@ -776,6 +785,9 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
     val voiceName: String get() = EdgeTts.name(msVoice)
     private val msIo = Executors.newFixedThreadPool(2)
     private val wordMarks = HashMap<Int, List<EdgeTts.Word>>()
+    // Reading from a tapped word: (piece, character within it)
+    private var pendingSeek: Pair<Int, Int>? = null
+    private var startShift: Pair<Int, Int>? = null
     private var msFailures = 0
 
     /** Switches voice ("" = the phone's own voice) and carries on reading with it. */
@@ -885,7 +897,16 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun recordAhead() { for (k in 0..4) record(idx + k) }
+    private fun recordAhead() {
+        for (k in 0..4) record(idx + k)
+        // The start of the next two paragraphs too, so skipping forward plays straight away
+        val p = items.getOrNull(idx)?.p ?: return
+        for (target in p + 1..p + 2) {
+            var j = idx + 1
+            while (j < items.size && items[j].p < target) j++
+            if (j < items.size) record(j)
+        }
+    }
 
     private fun onRendered(id: String?, ok: Boolean) {
         val parts = id?.split(':') ?: return
@@ -966,6 +987,13 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
             // Manga: let the view glide down through the artwork before reading the next bubble
             if (isManga) wait = viewListener?.artPause(p) ?: 0L
             paraChanged(p)
+        }
+        // Started from a tapped word: jump into the recording instead of re-recording
+        val ps = pendingSeek
+        if (ps != null && ps.first == i) {
+            pendingSeek = null
+            val ms = try { seekMs(i, ps.second, mp.duration) } catch (_: Exception) { 0 }
+            if (ms > 0) try { mp.seekTo(ms) } catch (_: Exception) {}
         }
         if (wait > 0) {
             handler.postDelayed({ if (player === mp && playing) try { mp.start() } catch (_: Exception) {} }, wait)
@@ -1199,14 +1227,42 @@ class ReaderService : Service(), TextToSpeech.OnInitListener {
         val i = items.indexOfFirst { it.p >= target }
         if (i < 0) return
         idx = i
+        pendingSeek = null
         if (playing) speakCurrent() else { val p = items[idx].p; paraChanged(p) }
     }
 
-    fun startAtPara(pi: Int) {
-        val i = items.indexOfFirst { it.p >= pi }
-        if (i < 0) return
-        idx = i
+    fun startAtPara(pi: Int) = startAt(pi, 0)
+
+    /** Reads from a word: paragraph [pi], character [charOffset] within it. */
+    fun startAt(pi: Int, charOffset: Int) {
+        val inPara = items.withIndex().filter { it.value.p == pi }
+        if (inPara.isEmpty()) {
+            val i = items.indexOfFirst { it.p >= pi }
+            if (i < 0) return
+            idx = i
+            pendingSeek = null
+        } else {
+            val hit = inPara.lastOrNull { it.value.offset in 0..charOffset } ?: inPara.first()
+            idx = hit.index
+            val t = hit.value.text
+            var within = (charOffset - hit.value.offset).coerceIn(0, t.length)
+            // Back to the start of the word
+            within = if (within >= t.length) 0 else t.lastIndexOf(' ', within).let { if (it < 0) 0 else it + 1 }.coerceAtMost(within)
+            pendingSeek = if (within > 0) Pair(idx, within) else null
+        }
         if (playing) speakCurrent() else play()
+    }
+
+    /** Where to start in a recording so it begins at character [within] of piece [i]. */
+    private fun seekMs(i: Int, within: Int, duration: Int): Int {
+        val marks = wordMarks[i]
+        if (!marks.isNullOrEmpty()) {
+            val w = marks.firstOrNull { it.start >= within } ?: marks.last()
+            return (w.ms - 60).coerceAtLeast(0).toInt()
+        }
+        val len = items.getOrNull(i)?.text?.length ?: return 0
+        if (len == 0 || duration <= 0) return 0
+        return ((within.toFloat() / len) * duration).toInt()
     }
 
     fun setRate(r: Float) {
